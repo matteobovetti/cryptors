@@ -1,0 +1,63 @@
+name: Cargo Check and Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-Dwarnings"
+  SCCACHE_GHA_ENABLED: "true"
+  CC: "sccache cc"
+  CXX: "sccache c++"
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jlumbroso/free-disk-space@main
+      - uses: dtolnay/rust-toolchain@1.95
+      - uses: Swatinem/rust-cache@v2
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sudo apt-get install -y protobuf-compiler
+      - run: cargo check --all
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jlumbroso/free-disk-space@main
+      - uses: dtolnay/rust-toolchain@1.95
+      - uses: Swatinem/rust-cache@v2
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sudo apt-get install -y protobuf-compiler
+      # `--nocapture` so the log records which x86 backends this runner's CPU
+      # had the features to execute -- SSE2 is baseline, AVX2 is not.
+      - run: cargo test --all -- --nocapture
+  test-aarch64:
+    # The runners are all x86_64, so the aarch64 backends would otherwise never
+    # be compiled in CI, let alone run. QEMU user-mode emulation is slower than
+    # native but executes the real NEON instructions, so the differential tests
+    # against the scalar reference genuinely cover them. The throughput tests
+    # are `#[ignore]`d and so stay out of the emulated run.
+    name: Test (aarch64, emulated)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jlumbroso/free-disk-space@main
+      - uses: dtolnay/rust-toolchain@1.95
+        with:
+          targets: aarch64-unknown-linux-gnu
+      # Installs the cross linker and registers QEMU as the cargo test runner
+      # for this target, so `cargo test --target` just works.
+      - uses: taiki-e/setup-cross-toolchain-action@v1
+        with:
+          target: aarch64-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@v2
+      - uses: mozilla-actions/sccache-action@v0.0.11
+      - run: sudo apt-get install -y protobuf-compiler
+      - run: cargo test --all --target aarch64-unknown-linux-gnu -- --nocapture
