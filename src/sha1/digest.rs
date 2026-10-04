@@ -1,14 +1,14 @@
-/// Initial state, RFC 3174 section 6.1.
+/// Initial hash state (RFC 3174 section 6.1).
 const INIT: [u32; 5] = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0];
 
-/// Round constants, RFC 3174 section 5.
+/// Round constants (RFC 3174 section 5).
 pub(super) const K: [u32; 4] = [0x5a827999, 0x6ed9eba1, 0x8f1bbcdc, 0xca62c1d6];
 
 #[cfg(target_arch = "aarch64")]
 #[inline]
 fn has_hw_sha1() -> bool {
-    // On targets where `sha2` is baseline (notably aarch64-apple-darwin) this
-    // folds to a constant and no runtime probe is emitted at all.
+    // On some targets (e.g. aarch64-apple-darwin) `sha2` is always present,
+    // so this check is skipped entirely at compile time.
     cfg!(target_feature = "sha2") || std::arch::is_aarch64_feature_detected!("sha2")
 }
 
@@ -20,24 +20,24 @@ fn has_hw_sha1() -> bool {
         && std::arch::is_x86_feature_detected!("sse4.1")
 }
 
-/// Compresses every complete 64-byte block in `blocks` into `state`, using the
-/// fastest backend this CPU supports.
+/// Hashes every full 64-byte block in `blocks` into `state`, picking the
+/// fastest backend the CPU supports.
 ///
-/// Dispatch happens once per call rather than once per block, so the hardware
-/// backends can hoist constant setup and the state load/store out of their
-/// block loop.
+/// We check which backend to use once per call, not once per block, so the
+/// hardware backends only need to set up once per message instead of once
+/// per block.
 #[inline]
 fn compress(state: &mut [u32; 5], blocks: &[u8]) {
     #[cfg(target_arch = "aarch64")]
     if has_hw_sha1() {
-        // SAFETY: `has_hw_sha1` just confirmed the `sha2` target feature.
+        // SAFETY: has_hw_sha1() just confirmed the `sha2` feature is available.
         unsafe { super::aarch64::compress(state, blocks) };
         return;
     }
 
     #[cfg(target_arch = "x86_64")]
     if has_hw_sha1() {
-        // SAFETY: `has_hw_sha1` just confirmed `sha`, `ssse3` and `sse4.1`.
+        // SAFETY: has_hw_sha1() just confirmed `sha`, `ssse3` and `sse4.1` are available.
         unsafe { super::x86::compress(state, blocks) };
         return;
     }
@@ -47,14 +47,15 @@ fn compress(state: &mut [u32; 5], blocks: &[u8]) {
 
 /// Computes the 160-bit SHA-1 digest of `input`.
 ///
-/// Full 64-byte blocks are hashed directly out of `input` (no copy); only the
-/// final 1-2 blocks (message tail + padding + length) are staged on the stack.
+/// Full blocks are hashed straight out of `input` without copying; only the
+/// last partial block (plus padding) is copied onto the stack.
 pub fn digest(input: &[u8]) -> [u8; 20] {
     digest_with(compress, input)
 }
 
-/// Padding and finalization, parameterized over the compression backend so the
-/// tests can drive a specific one. Monomorphizes, so `digest` pays nothing.
+/// Does the padding and final hashing step. Takes the backend as a parameter
+/// so tests can force a specific one; `digest` always calls this with the
+/// auto-selected `compress`, so it costs nothing in the normal case.
 #[inline]
 fn digest_with<F: FnMut(&mut [u32; 5], &[u8])>(mut compress_fn: F, input: &[u8]) -> [u8; 20] {
     let mut state = INIT;
@@ -63,8 +64,8 @@ fn digest_with<F: FnMut(&mut [u32; 5], &[u8])>(mut compress_fn: F, input: &[u8])
     compress_fn(&mut state, &input[..aligned]);
     let remainder = &input[aligned..];
 
-    // At most one extra block is needed beyond the remainder: 1 byte for the
-    // 0x80 marker + 8 bytes for the length always fit within 64 more bytes.
+    // The leftover bytes plus the required padding (a 0x80 marker byte and
+    // an 8-byte length) never need more than one extra 64-byte block.
     let mut tail = [0u8; 128];
     tail[..remainder.len()].copy_from_slice(remainder);
     tail[remainder.len()] = 0x80;
@@ -99,9 +100,9 @@ pub fn hex_digest(input: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{digest, digest_with, hex_digest};
-    use crate::sha::scalar;
+    use crate::sha1::scalar;
 
-    /// Which backend `compress` will actually select here.
+    /// Which backend `compress` picks on this machine.
     fn active_backend() -> &'static str {
         #[cfg(target_arch = "aarch64")]
         if super::has_hw_sha1() {
@@ -140,8 +141,8 @@ mod tests {
     #[test]
     fn million_a() {
         // RFC 3174 section 7.3, test 3: 1,000,000 repetitions of 'a'.
-        // The only vector here long enough to exercise a hardware backend's
-        // steady-state block loop (15,625 blocks).
+        // This is the only test input big enough (15,625 blocks) to actually
+        // exercise a hardware backend's main loop.
         let input = vec![b'a'; 1_000_000];
         assert_eq!(
             hex_digest(&input),
@@ -184,16 +185,17 @@ mod tests {
         );
     }
 
-    /// The hardware backends must agree with the scalar reference bit-for-bit.
+    /// Checks that each hardware backend produces exactly the same digest as
+    /// the scalar backend.
     ///
-    /// This calls the hardware backend *directly* rather than through
-    /// `super::compress`, so it cannot silently degenerate into comparing the
-    /// scalar backend against itself. On a CPU without hardware SHA-1 the
-    /// relevant arm is skipped and the test reports that.
+    /// This calls the hardware backend directly instead of going through
+    /// `super::compress`, so the test can't accidentally end up comparing the
+    /// scalar backend against itself. If the CPU doesn't support that
+    /// backend, its part of the test is just skipped.
     #[test]
     fn matches_scalar_backend() {
-        // Lengths chosen around every boundary that changes block/padding
-        // layout, plus sizes large enough to cover a backend's steady state.
+        // These lengths cover every point where the padding/block layout
+        // changes, plus a few large sizes to exercise the main loop.
         let lengths = [
             0usize, 1, 55, 56, 57, 63, 64, 65, 119, 120, 121, 127, 128, 129, 191, 192, 200, 255,
             256, 257, 1023, 1024, 1025, 4096, 4097, 65536, 100_000,
@@ -205,9 +207,9 @@ mod tests {
         if super::has_hw_sha1() {
             for len in lengths {
                 let input: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
-                // SAFETY: `has_hw_sha1` confirmed the `sha2` target feature.
+                // SAFETY: has_hw_sha1() just confirmed the `sha2` feature is available.
                 let hw = digest_with(
-                    |s: &mut [u32; 5], b: &[u8]| unsafe { crate::sha::aarch64::compress(s, b) },
+                    |s: &mut [u32; 5], b: &[u8]| unsafe { crate::sha1::aarch64::compress(s, b) },
                     &input,
                 );
                 assert_eq!(
@@ -223,9 +225,9 @@ mod tests {
         if super::has_hw_sha1() {
             for len in lengths {
                 let input: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
-                // SAFETY: `has_hw_sha1` confirmed `sha`, `ssse3` and `sse4.1`.
+                // SAFETY: has_hw_sha1() just confirmed `sha`, `ssse3` and `sse4.1` are available.
                 let hw = digest_with(
-                    |s: &mut [u32; 5], b: &[u8]| unsafe { crate::sha::x86::compress(s, b) },
+                    |s: &mut [u32; 5], b: &[u8]| unsafe { crate::sha1::x86::compress(s, b) },
                     &input,
                 );
                 assert_eq!(
@@ -242,11 +244,11 @@ mod tests {
         }
     }
 
-    /// Known-answer vectors driven through the scalar backend explicitly.
+    /// Checks the known-answer vectors against the scalar backend specifically.
     ///
-    /// Everything else above goes through `digest`, which on a machine with
-    /// hardware SHA-1 never touches `scalar`. Without this, the fallback would
-    /// only ever be checked against itself on such a machine.
+    /// Every other test above goes through `digest`, which skips `scalar` on
+    /// a machine with hardware SHA-1. Without this test, the scalar backend
+    /// would never actually get checked on such a machine.
     #[test]
     fn scalar_rfc_vectors() {
         let cases: [(&[u8], &str); 4] = [
@@ -278,8 +280,9 @@ mod tests {
         assert_eq!(hex, "34aa973cd4c4daa4f61eeb2bdbad27316534016f");
     }
 
-    /// The scalar backend itself, checked against an independently padded
-    /// reference so a padding bug cannot hide behind a shared helper.
+    /// Checks the scalar backend against a second, independently-written
+    /// padding implementation, so a padding bug can't hide just because both
+    /// paths share the same (buggy) helper.
     #[test]
     fn scalar_matches_independent_reference() {
         for len in [
@@ -294,9 +297,9 @@ mod tests {
         }
     }
 
-    /// Ground truth for `scalar_matches_independent_reference`: pads by fully
-    /// materializing the message (the straightforward, non-optimized approach)
-    /// rather than staging only the tail on the stack.
+    /// Reference implementation for `scalar_matches_independent_reference`.
+    /// Builds the whole padded message as one `Vec` -- the simple, unoptimized
+    /// way -- instead of only staging the tail on the stack.
     fn reference_digest(input: &[u8]) -> [u8; 20] {
         let mut state = super::INIT;
 
@@ -317,8 +320,8 @@ mod tests {
         out
     }
 
-    /// The public API must route through whichever backend is active and still
-    /// produce the reference answer.
+    /// Checks that the public `digest` function, through whichever backend
+    /// it picks, still matches the scalar reference.
     #[test]
     fn public_api_matches_scalar() {
         for len in [0usize, 63, 64, 65, 1024, 100_000] {
@@ -339,8 +342,9 @@ mod tests {
         let data = vec![0x61u8; 64 * 1024 * 1024];
         let mib = data.len() as f64 / (1024.0 * 1024.0);
 
-        // A single cold pass over a fresh 64 MiB buffer measures page faults and
-        // clock ramp as much as SHA-1, so warm up and report the best of several.
+        // The first pass over a fresh buffer is slowed down by page faults and
+        // CPU clock ramp-up, not just SHA-1 itself. So we warm up once, then
+        // time several runs and keep the best.
         std::hint::black_box(digest(&data));
 
         let mut best = 0.0f64;

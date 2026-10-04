@@ -1,14 +1,14 @@
-//! Portable scalar SHA-1 compression function.
+//! Plain, portable SHA-1 compression function -- no CPU-specific instructions.
 //!
-//! This is the reference implementation: it runs everywhere, and the hardware
-//! backends in this module are differential-tested against it (see the
-//! `matches_scalar_backend` test in the parent module).
+//! This is the trusted reference implementation: it runs on any CPU, and the
+//! hardware backends are checked against it by the `matches_scalar_backend`
+//! test in the parent module.
 //!
-//! The 80 steps are fully unrolled, so the round function, message-word index
-//! and round constant are all known at compile time -- no per-step branch or
-//! table lookup. The message schedule lives in a 16-word ring buffer rather
-//! than materializing all 80 words, so each schedule word is computed once, in
-//! place, right before it is consumed.
+//! All 80 steps are written out by hand below instead of looped, so the
+//! compiler knows the round function, message-word index and round constant
+//! for every step ahead of time. The 80 message words are kept in a 16-word
+//! ring buffer instead of all being computed upfront, so each one is
+//! computed once, right before it's used, and old slots get reused.
 
 use super::K;
 
@@ -28,12 +28,13 @@ macro_rules! f3 {
     };
 }
 
-/// One SHA-1 step. `$a`..`$e` name the physical variables holding the current
-/// (A, B, C, D, E) state in round order. Only two writes happen per step: the
-/// new `A` (TEMP) goes into the slot passed as `$e` (whose old value is dead,
-/// since `E_next = D`), and the new `C` goes into the slot passed as `$b`
-/// (dead too, since `B_next = A`). The next step reads the same five variables
-/// rotated one position right, so the other three need no copying.
+/// Runs one SHA-1 step. `$a`..`$e` are the five state variables (A, B, C, D, E),
+/// passed in round order. Each call only writes two of them: the new `A`
+/// value is written into whichever variable is passed as `$e` (its old value
+/// is no longer needed), and the new `C` value is written into whichever
+/// variable is passed as `$b` (same reason). The caller rotates which
+/// variable goes in which slot from one step to the next, instead of
+/// physically copying all five values around.
 macro_rules! step {
     ($f:ident, $a:ident, $b:ident, $c:ident, $d:ident, $e:ident, $k:expr, $x:expr) => {
         $e = $e
@@ -45,10 +46,10 @@ macro_rules! step {
     };
 }
 
-/// Compresses every complete 64-byte block in `blocks` into `state`.
+/// Hashes every full 64-byte block in `blocks` into `state`.
 ///
-/// Any trailing bytes that do not form a full block are ignored; callers are
-/// responsible for padding (see `super::digest`).
+/// Any leftover bytes that don't fill a whole block are ignored; it's up to
+/// the caller to pad the message first (see `super::digest`).
 pub(super) fn compress(state: &mut [u32; 5], blocks: &[u8]) {
     for block in blocks.chunks_exact(64) {
         process_block(state, block);
@@ -64,11 +65,12 @@ fn process_block(state: &mut [u32; 5], block: &[u8]) {
 
     let [mut a, mut b, mut c, mut d, mut e] = *state;
 
-    // `w` is a 16-word ring buffer: slot `t & 15` holds message word `t`. For
-    // t >= 16 the schedule is `rotl(w[t-3] ^ w[t-8] ^ w[t-14] ^ w[t-16], 1)`;
-    // `w[t-16]` lives in the very slot being overwritten, so each update below
-    // reads it as `w[t & 15]` before storing the new value there. The other
-    // three indices are `(t - {3,8,14}) & 15`, folded to literals.
+    // `w` is a ring buffer of 16 words: slot `t & 15` holds message word `t`.
+    // From word 16 onward, each word is `rotl(w[t-3] ^ w[t-8] ^ w[t-14] ^ w[t-16], 1)`.
+    // Since `w[t-16]` is exactly the slot about to be overwritten, each line
+    // below reads the old value out of `w[t & 15]` before writing the new one
+    // back into it. The other indices (`t-3`, `t-8`, `t-14`) are written out
+    // as plain numbers below instead of computed.
     step!(f1, a, b, c, d, e, K[0], w[0]);
     step!(f1, e, a, b, c, d, K[0], w[1]);
     step!(f1, d, e, a, b, c, K[0], w[2]);

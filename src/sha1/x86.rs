@@ -1,41 +1,42 @@
-//! SHA-1 compression using the x86 SHA extensions (SHA-NI).
+//! SHA-1 compression using Intel/AMD's dedicated SHA instructions (SHA-NI).
 //!
-//! `SHA1RNDS4` performs four SHA-1 rounds, `SHA1NEXTE` folds the running E term
-//! into the next group, and `SHA1MSG1`/`SHA1MSG2` expand the message schedule,
-//! so a block costs 20 round instructions instead of 80 scalar steps.
+//! One `SHA1RNDS4` instruction does four SHA-1 rounds at once, `SHA1NEXTE`
+//! carries the E value over to the next group of four, and `SHA1MSG1`/
+//! `SHA1MSG2` compute the message schedule. So each block takes 20
+//! instructions here instead of 80 steps in the scalar version.
 //!
-//! Only reachable through `super::compress`, which verifies the `sha`, `ssse3`
-//! and `sse4.1` target features first.
+//! This code only runs via `super::compress`, which checks the `sha`, `ssse3`
+//! and `sse4.1` CPU features are present before calling it.
 //!
-//! NOTE: this backend is compile-verified and differential-tested against
-//! `super::scalar` on any CPU that reports SHA-NI, but it was developed on an
-//! aarch64 host and has not been executed on SHA-NI hardware by its author.
-//! The `matches_scalar_backend` test in the parent module is what establishes
-//! its correctness; run the test suite on a SHA-NI machine to exercise it.
+//! NOTE: this file compiles and is tested against `super::scalar` on any CPU
+//! that reports SHA-NI support, but the author has not personally run it on
+//! real SHA-NI hardware. The `matches_scalar_backend` test in the parent
+//! module is what proves it's correct -- run the test suite on a SHA-NI
+//! machine to confirm.
 
 use core::arch::x86_64::*;
 
-/// Compresses every complete 64-byte block in `blocks` into `state`.
+/// Hashes every full 64-byte block in `blocks` into `state`.
 ///
-/// Any trailing bytes that do not form a full block are ignored; callers are
-/// responsible for padding (see `super::digest`).
+/// Any leftover bytes that don't fill a whole block are ignored; it's up to
+/// the caller to pad the message first (see `super::digest`).
 ///
 /// # Safety
 ///
-/// The caller must ensure the `sha`, `ssse3` and `sse4.1` target features are
-/// available on this CPU. `super::compress` is the only caller and checks
-/// this. No other invariants are required: the loop walks `chunks_exact(64)`,
-/// so every vector load below is in bounds for any `blocks` length, and
+/// The caller must make sure the `sha`, `ssse3` and `sse4.1` CPU features are
+/// available. `super::compress` is the only caller, and it checks this
+/// already. Nothing else needs checking: we only ever read in 64-byte chunks
+/// via `chunks_exact(64)`, so every load below is safely in bounds, and
 /// `state` is a fixed-size array.
 #[target_feature(enable = "sha,ssse3,sse4.1")]
 pub(super) unsafe fn compress(state: &mut [u32; 5], blocks: &[u8]) {
-    // Reverses all 16 bytes: this both byte-swaps each word (SHA-1 reads the
-    // message big-endian) and flips word order to match the reversed ABCD
-    // layout the SHA-NI instructions expect.
+    // This mask reverses all 16 bytes of a 128-bit register. That both
+    // byte-swaps each 32-bit word (SHA-1 expects big-endian) and reverses the
+    // word order, which is the order SHA-NI's instructions want.
     let mask = _mm_set_epi64x(0x0001_0203_0405_0607, 0x0809_0a0b_0c0d_0e0f);
 
-    // SHA-NI keeps ABCD in reverse word order, and E alone in the top lane.
-    // SAFETY: `state` holds 5 words, so the 4-word load is in bounds.
+    // SHA-NI keeps A, B, C, D in reverse order in one register, and E on its own.
+    // SAFETY: `state` has 5 words, so loading the first 4 is in bounds.
     let loaded = unsafe { _mm_loadu_si128(state.as_ptr().cast()) };
     let mut abcd = _mm_shuffle_epi32(loaded, 0x1b);
     let mut e0 = _mm_set_epi32(state[4] as i32, 0, 0, 0);
@@ -44,8 +45,8 @@ pub(super) unsafe fn compress(state: &mut [u32; 5], blocks: &[u8]) {
         let abcd_saved = abcd;
         let e0_saved = e0;
 
-        // SAFETY: `chunks_exact(64)` guarantees `block` is exactly 64 bytes, so
-        // all four 16-byte loads are in bounds.
+        // SAFETY: `chunks_exact(64)` guarantees `block` is exactly 64 bytes,
+        // so all four 16-byte loads below are in bounds.
         let (mut m0, mut m1, mut m2, mut m3) = unsafe {
             let p = block.as_ptr();
             (
@@ -58,8 +59,8 @@ pub(super) unsafe fn compress(state: &mut [u32; 5], blocks: &[u8]) {
 
         let mut e1;
 
-        // Rounds 0-3. The round constants are folded in by SHA1RNDS4 itself,
-        // selected by the const immediate (0 => K[0] .. 3 => K[3]).
+        // Rounds 0-3. SHA1RNDS4 adds in the round constant itself, chosen by
+        // its const argument (0 => K[0] .. 3 => K[3]).
         e0 = _mm_add_epi32(e0, m0);
         e1 = abcd;
         abcd = _mm_sha1rnds4_epu32::<0>(abcd, e0);
@@ -207,13 +208,13 @@ pub(super) unsafe fn compress(state: &mut [u32; 5], blocks: &[u8]) {
         e0 = abcd;
         abcd = _mm_sha1rnds4_epu32::<3>(abcd, e1);
 
-        // Feed-forward: add this block's starting state back in. SHA1NEXTE
-        // supplies the rotate-left-30 that the E term needs.
+        // Add this block's starting state back into the result. SHA1NEXTE
+        // also applies the left-rotate-by-30 that E needs here.
         e0 = _mm_sha1nexte_epu32(e0, e0_saved);
         abcd = _mm_add_epi32(abcd, abcd_saved);
     }
 
-    // SAFETY: `state` holds 5 words, so the 4-word store is in bounds.
+    // SAFETY: `state` has 5 words, so storing the first 4 is in bounds.
     unsafe { _mm_storeu_si128(state.as_mut_ptr().cast(), _mm_shuffle_epi32(abcd, 0x1b)) };
     state[4] = _mm_extract_epi32(e0, 3) as u32;
 }
