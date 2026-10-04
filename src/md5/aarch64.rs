@@ -1,36 +1,35 @@
 //! Lane-parallel MD5 compression using aarch64 NEON, at widths 4, 8 and 16.
 //!
-//! There is no MD5 instruction on aarch64 (see the module docs in `super`), so
-//! this is not a one-instruction-per-round backend like `crate::sha::aarch64`.
-//! Instead each 128-bit register holds the same state word of four *different*
-//! messages, and the ordinary MD5 step runs on all four at once -- four digests
-//! for the price of one dependency chain.
+//! aarch64 has no MD5 instruction (see the module docs in `super`), so this
+//! isn't a one-instruction-per-round backend like `crate::sha::aarch64`.
+//! Instead, each 128-bit register holds one state word from four *different*
+//! messages, and the normal MD5 step runs on all four at once -- four
+//! digests for the price of one dependency chain.
 //!
-//! NEON maps the step well: the `F` and `G` functions are a single `BSL`
-//! (bit-select), `I` uses `ORN`, and the left-rotation is `SHL` followed by
-//! `SRI` (shift-right-and-insert), which keeps the rotate at two instructions
-//! and no temporary.
+//! NEON maps the step well: `F` and `G` are a single `BSL` (bit-select), `I`
+//! uses `ORN`, and the left rotation is `SHL` followed by `SRI`
+//! (shift-right-and-insert) -- two instructions, no temporary needed.
 //!
-//! # Why the widest version is 16 lanes, not 4
+//! # Why the widest version uses 16 lanes, not 4
 //!
-//! Four lanes alone leave the vector units mostly idle. Every instruction on
-//! MD5's serial chain has multi-cycle latency on NEON, and with one chain in
-//! flight there is nothing to issue while it completes -- measured at only
-//! ~1.7x the scalar backend on an M1 Pro. So [`compress_lanes`] holds each
-//! state word as `H` independent 128-bit halves and interleaves them
-//! instruction by instruction, each filling the others' latency. On an M1 Pro
-//! that is worth 1.7x at `H = 1`, 3.2x at `H = 2` and 4.8x at `H = 4`, for no
-//! extra arithmetic; `H = 4` is where issue width and latency balance out, so
-//! that is the widest version. The message words of four halves exceed the 32
-//! vector registers and partly spill, but they are off the serial chain and
-//! stay in L1.
+//! Four lanes alone leave the vector units mostly idle: every instruction in
+//! MD5's chain has multi-cycle latency, and with only one chain in flight
+//! there's nothing to issue while it completes -- measured at only ~1.7x the
+//! scalar backend on an M1 Pro. So [`compress_lanes`] splits each state word
+//! into `H` independent 128-bit halves and interleaves their instructions,
+//! so each half fills in the others' latency gaps. On an M1 Pro that's worth
+//! 1.7x at `H = 1`, 3.2x at `H = 2`, and 4.8x at `H = 4` -- for no extra
+//! arithmetic -- so `H = 4` is where it stops paying off, making it the
+//! widest version. The message words of four halves don't all fit in the 32
+//! vector registers and partly spill, but they're off the critical chain and
+//! stay in L1 cache.
 //!
-//! All three widths exist so that `super::digest::digest_many` can step down
-//! through them and keep a batch whose size is not a multiple of 16 off the
+//! All three widths exist so `super::digest::digest_many` can step down
+//! through them, keeping a batch that isn't a multiple of 16 mostly off the
 //! scalar path.
 //!
-//! Only reachable through `super::digest::digest_many`, which verifies the
-//! `neon` target feature first (it is part of the aarch64 baseline).
+//! Only reachable through `super::digest::digest_many`, which checks for the
+//! `neon` feature first (though it's always available on aarch64 anyway).
 
 use core::arch::aarch64::*;
 
@@ -38,9 +37,10 @@ use super::T;
 
 /// The four nonlinear functions, RFC 1321 section 3.4.
 ///
-/// `vbslq_u32(mask, p, q)` yields `(mask & p) | (!mask & q)`, which is exactly
-/// `F` with `mask = x`, and exactly `G` with `mask = z` and the operands
-/// swapped. `vornq_u32(p, q)` yields `p | !q`, the inner term of `I`.
+/// `vbslq_u32(mask, p, q)` computes `(mask & p) | (!mask & q)`, which is
+/// exactly `F` with `mask = x`, and exactly `G` with `mask = z` and the
+/// operands swapped. `vornq_u32(p, q)` computes `p | !q`, the inner term of
+/// `I`.
 macro_rules! nonlinear {
     (F, $x:expr, $y:expr, $z:expr) => {
         vbslq_u32($x, $y, $z)
@@ -56,19 +56,20 @@ macro_rules! nonlinear {
     };
 }
 
-/// One MD5 step, across the `H` independent 128-bit halves of every state
-/// variable. Each `from_fn` below unrolls to `H` back-to-back instructions, so
-/// the halves' dependency chains interleave rather than queue up.
+/// One MD5 step, across the `H` independent 128-bit halves of each state
+/// variable. Each `from_fn` below unrolls into `H` back-to-back
+/// instructions, so the halves' dependency chains interleave instead of
+/// queuing up one after another.
 macro_rules! step {
     ($f:ident, $a:ident, $b:ident, $c:ident, $d:ident, $x:expr, $s:literal, $i:literal) => {
-        // SAFETY: `$x` is one element of the caller's `[[u32; W]; 16]`, i.e. a
-        // `[u32; W]` with `W == 4 * H`, so half `h` is in bounds for `h < H`.
+        // SAFETY: `$x` is a `[u32; W]` with `W == 4 * H` from the caller's
+        // array, so half `h` is in bounds for `h < H`.
         let x: [uint32x4_t; H] =
             core::array::from_fn(|h| unsafe { vld1q_u32($x.as_ptr().add(h * 4)) });
         let k = vdupq_n_u32(T[$i]);
-        // `$a + m + T` does not depend on the register the previous step wrote,
-        // so this add stays off the serial dependency chain; only the nonlinear
-        // function, one add, the rotate and the final add remain on it.
+        // `$a + m + T` doesn't depend on what the previous step wrote, so
+        // this add stays off the critical chain -- only the nonlinear
+        // function, one add, the rotate, and the final add remain on it.
         let acc: [uint32x4_t; H] = core::array::from_fn(|h| vaddq_u32(vaddq_u32($a[h], x[h]), k));
         let acc: [uint32x4_t; H] =
             core::array::from_fn(|h| vaddq_u32(acc[h], nonlinear!($f, $b[h], $c[h], $d[h])));
@@ -79,22 +80,23 @@ macro_rules! step {
     };
 }
 
-/// Compresses one 64-byte block in each of `W` lanes into `state`, holding the
-/// lanes as `H` 128-bit halves.
+/// Compresses one 64-byte block in each of `W` lanes into `state`, holding
+/// the lanes as `H` 128-bit halves.
 ///
 /// Both arrays are lane-transposed: `state[k][lane]` is state word `k` of
 /// message `lane`, and `m[word][lane]` is message word `word` of message
-/// `lane`. `super::digest::group_digest` produces that layout. Lanes
-/// `4h..4h + 4` are half `h`.
+/// `lane`. `super::digest::group_digest` builds that layout. Lanes
+/// `4h..4h + 4` make up half `h`.
 ///
 /// # Safety
 ///
-/// The caller must ensure the `neon` target feature is available on this CPU.
-/// The `compress*` wrappers below are the only callers; `super::digest` checks
-/// the feature before reaching them. No other invariants are required: `W` is
-/// pinned to `4 * H` by the const assertion, both arguments are fixed-size
-/// arrays, and `h < H` throughout, so every vector load and store below is in
-/// bounds by construction.
+/// The caller must make sure `neon` is available on this CPU. The
+/// `compress*` wrappers below are the only callers; `super::digest` checks
+/// the feature before reaching them (though `neon` is always available on
+/// aarch64 anyway). No other invariants matter: `W` is fixed to `4 * H` by
+/// the const assertion, both arguments are fixed-size arrays, and `h < H`
+/// always, so every vector load and store below is in bounds by
+/// construction.
 #[target_feature(enable = "neon")]
 #[inline]
 unsafe fn compress_lanes<const W: usize, const H: usize>(
@@ -103,7 +105,7 @@ unsafe fn compress_lanes<const W: usize, const H: usize>(
 ) {
     const { assert!(W == 4 * H, "each 128-bit half holds exactly 4 u32 lanes") };
 
-    // SAFETY: `state[k]` is a `[u32; 4 * H]`, so half `h` is in bounds.
+    // SAFETY: `state[k]` is a `[u32; 4 * H]`, so half `h` is always in bounds.
     let [a0, b0, c0, d0] = unsafe {
         [0usize, 1, 2, 3].map(|k| {
             core::array::from_fn::<uint32x4_t, H, _>(|h| vld1q_u32(state[k].as_ptr().add(h * 4)))
@@ -130,7 +132,7 @@ unsafe fn compress_lanes<const W: usize, const H: usize>(
 ///
 /// # Safety
 ///
-/// The caller must ensure the `neon` target feature is available on this CPU.
+/// The caller must make sure `neon` is available on this CPU.
 /// `super::digest::digest_many` is the only caller and checks this.
 #[target_feature(enable = "neon")]
 pub(super) unsafe fn compress4(state: &mut [[u32; 4]; 4], m: &[[u32; 4]; 16]) {
@@ -142,7 +144,7 @@ pub(super) unsafe fn compress4(state: &mut [[u32; 4]; 4], m: &[[u32; 4]; 16]) {
 ///
 /// # Safety
 ///
-/// The caller must ensure the `neon` target feature is available on this CPU.
+/// The caller must make sure `neon` is available on this CPU.
 /// `super::digest::digest_many` is the only caller and checks this.
 #[target_feature(enable = "neon")]
 pub(super) unsafe fn compress8(state: &mut [[u32; 8]; 4], m: &[[u32; 8]; 16]) {
@@ -150,12 +152,12 @@ pub(super) unsafe fn compress8(state: &mut [[u32; 8]; 4], m: &[[u32; 8]; 16]) {
     unsafe { compress_lanes::<8, 2>(state, m) }
 }
 
-/// Compresses one 64-byte block in each of 16 lanes -- the widest and fastest
-/// version. See [`compress_lanes`].
+/// Compresses one 64-byte block in each of 16 lanes -- the widest and
+/// fastest version. See [`compress_lanes`].
 ///
 /// # Safety
 ///
-/// The caller must ensure the `neon` target feature is available on this CPU.
+/// The caller must make sure `neon` is available on this CPU.
 /// `super::digest::digest_many` is the only caller and checks this.
 #[target_feature(enable = "neon")]
 pub(super) unsafe fn compress16(state: &mut [[u32; 16]; 4], m: &[[u32; 16]; 16]) {

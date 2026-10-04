@@ -12,6 +12,7 @@ keywords = ["crypto", "cryptography", "library"]
 categories = ["cryptography"]
 
 [dependencies]
+# MUST: This crate is a pure Rust implementation, so no dependencies are needed.
 
 [profile.release]
 lto = true

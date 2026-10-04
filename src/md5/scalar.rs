@@ -1,12 +1,12 @@
 //! Portable scalar MD5 compression function.
 //!
-//! This is the reference implementation: it runs everywhere, and the
-//! lane-parallel backends in this module are differential-tested against it
-//! (see the `matches_scalar_backend` test in `super::digest`).
+//! This is the reference implementation: it runs on every target, and the
+//! SIMD backends elsewhere in this module are checked against it (see the
+//! `matches_scalar_backend` test in `super::digest`).
 //!
-//! The 64 steps are fully unrolled by `md5_schedule!`, so the nonlinear
-//! function, message-word index, shift amount and constant are all known at
-//! compile time -- no per-step branch, modulo, or table lookup.
+//! `md5_schedule!` fully unrolls the 64 steps, so the nonlinear function,
+//! message word, shift amount, and constant for each step are all known at
+//! compile time -- no branches, modulo, or table lookups at runtime.
 
 use super::T;
 
@@ -26,9 +26,9 @@ macro_rules! nonlinear {
     };
 }
 
-/// One MD5 step. `$a`..`$d` name the physical variables holding the current
-/// (A, B, C, D) state in round order; only `$a` is written, and the next step
-/// reads the same four variables rotated one position, so nothing is copied.
+/// One MD5 step. `$a`..`$d` are the variables holding the current state in
+/// round order; only `$a` is written, and the next step reads the same four
+/// variables shifted over by one, so nothing needs to be copied.
 macro_rules! step {
     ($f:ident, $a:ident, $b:ident, $c:ident, $d:ident, $x:expr, $s:literal, $i:literal) => {
         $a = $a
@@ -58,13 +58,13 @@ pub(super) fn process_block(state: &mut [u32; 4], block: &[u8; 64]) {
     state[3] = state[3].wrapping_add(d);
 }
 
-/// Compresses every complete 64-byte block in `blocks` into `state`.
+/// Compresses every full 64-byte block in `blocks` into `state`.
 ///
-/// Any trailing bytes that do not form a full block are ignored; callers are
+/// Leftover bytes that don't form a full block are ignored; the caller is
 /// responsible for padding (see `super::digest::digest`).
 pub(super) fn compress(state: &mut [u32; 4], blocks: &[u8]) {
     for block in blocks.chunks_exact(64) {
-        // `chunks_exact(64)` guarantees the conversion succeeds.
+        // `chunks_exact(64)` guarantees this conversion succeeds.
         process_block(state, block.try_into().unwrap());
     }
 }

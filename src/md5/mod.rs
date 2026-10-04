@@ -1,45 +1,44 @@
-//! From-scratch MD5 implementation (RFC 1321). Broken for security use; study/legacy-checksum only.
+//! From-scratch MD5 implementation (RFC 1321). MD5 is broken for security use;
+//! this is for study or legacy checksums only.
 //!
-//! # Why there is no single-message hardware backend
+//! # Why there's no hardware backend for a single message
 //!
-//! Unlike SHA-1 (see [`crate::sha`]), **no mainstream CPU has an MD5
-//! instruction**. The ARMv8 cryptographic extensions cover AES, PMULL, SHA-1,
-//! SHA-2, SHA-3 and SM3/SM4; x86 offers AES-NI and SHA-NI (SHA-1/SHA-256).
-//! Neither includes MD5, and none is likely to: MD5 has been broken since 2004.
+//! No mainstream CPU has an MD5 instruction. ARM's and x86's crypto
+//! extensions cover AES, SHA-1, SHA-2, and others, but not MD5 -- it's been
+//! broken since 2004, so nobody is adding hardware support for it.
 //!
-//! Plain SIMD cannot rescue a single digest either. SHA-1 is accelerable partly
-//! because its 80-word message schedule is independent of the round state, so
-//! schedule expansion and rounds overlap. MD5 has no schedule at all -- it
-//! reuses the 16 message words directly -- and all 64 steps form one serial
-//! dependency chain through `a`, `b`, `c`, `d`. There is nothing to put in
-//! lanes 1..N of a vector register.
+//! SIMD can't help a single digest either: all 64 MD5 steps depend on the
+//! previous one through the state variables `a`, `b`, `c`, `d`, so there's
+//! one long chain of work and no independent pieces to spread across SIMD
+//! lanes.
 //!
-//! # What is accelerated: multi-buffer hashing
+//! # What is accelerated: hashing many messages at once
 //!
-//! What *is* independent is two different messages. [`digest_many`] exploits
-//! exactly that, placing one message per vector lane and running N digests in
-//! lockstep for the price of one dependency chain:
+//! Different *messages* are independent, though. [`digest_many`] uses that:
+//! it puts one message per SIMD lane and runs several digests side by side,
+//! getting several hashes for the price of one dependency chain:
 //!
-//! | Backend | Requires | Lanes |
+//! | Backend | Requires | Messages at once |
 //! |---------|----------|-------|
-//! | [`x86`] (AVX2) | `avx2` | 8 messages at a time |
-//! | [`x86`] (SSE2) | `sse2` -- x86-64 baseline | 4 messages at a time |
-//! | [`aarch64`] (NEON) | `neon` -- aarch64 baseline | 4 messages at a time |
+//! | [`x86`] (AVX2) | `avx2` | 8 |
+//! | [`x86`] (SSE2) | `sse2` -- always on x86-64 | 4 |
+//! | [`aarch64`] (NEON) | `neon` -- always on aarch64 | 4 |
 //! | [`scalar`] | nothing -- always available | 1 (reference) |
 //!
-//! [`digest`] therefore always runs the scalar backend, which is already at the
-//! serial-dependency limit; [`digest_many`] is where the hardware wins. The
-//! scalar backend is the correctness reference, and every lane-parallel backend
-//! is differential-tested against it by `matches_scalar_backend`.
+//! [`digest`] always uses the scalar backend, since a single message can't
+//! be sped up. [`digest_many`] is where the SIMD backends actually help. The
+//! scalar backend also serves as the correctness reference: every SIMD
+//! backend is checked against it by the `matches_scalar_backend` test.
 
-/// The MD5 round schedule, RFC 1321 section 3.4: for each of the 64 steps, the
-/// nonlinear function, the four state variables in round order, the message
-/// word consumed, the left-rotation amount, and the index into [`digest::T`].
+/// The MD5 round schedule (RFC 1321 section 3.4): for each of the 64 steps,
+/// which nonlinear function to use, the four state variables in order, which
+/// message word to consume, how far to rotate, and which constant to use
+/// (an index into [`digest::T`]).
 ///
-/// Every backend drives this one table, invoking the `$step` macro it supplies
-/// 64 times. The table is thus written -- and auditable against the RFC -- in
-/// exactly one place, and a backend can only differ from the reference in *how*
-/// a step is computed, never in *which* steps run.
+/// Every backend runs this same table by passing in its own `$step` macro.
+/// So the sequence of steps is written once, easy to check against the RFC,
+/// and a backend can only differ in *how* it computes a step, never in
+/// *which* steps it runs.
 macro_rules! md5_schedule {
     ($step:ident, $a:ident, $b:ident, $c:ident, $d:ident, $m:ident) => {
         // Round 1: F, shifts 7/12/17/22, message word i.

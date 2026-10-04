@@ -37,14 +37,24 @@ bench:
 	cargo bench --all
 
 # The throughput tests are `#[ignore]`d so that `make test` stays fast; each
-# one names the backend it selected on this machine.
+# one names the backend it selected on this machine. One thread, because
+# benchmarks timed side by side compete for the same cores and memory.
 bench-throughput:
-	cargo test --release -- --ignored --nocapture
+	cargo test --release -- --ignored --nocapture --test-threads=1
 
 # The Go standard-library counterparts, same buffer sizes and methodology.
+# `-tags purego` is Go's portable SHA-256 and SHA-3, the counterpart of our
+# scalar backends. On x86-64, `GODEBUG=cpu.sha=off` makes Go's SHA-256 skip
+# SHA-NI and run its AVX2 path, the counterpart of our AVX2 backend; other
+# architectures have no such path, so the run is skipped there.
 bench-go:
 	cd bench/sha1cmp && go test -v
 	cd bench/md5cmp && go test -v
+	cd bench/sha256cmp && go test -v
+	cd bench/sha256cmp && go test -tags purego -v
+	if [ "$$(go env GOARCH)" = amd64 ]; then cd bench/sha256cmp && GODEBUG=cpu.sha=off go test -v; fi
+	cd bench/sha3cmp && go test -v
+	cd bench/sha3cmp && go test -tags purego -v
 
 audit:
 	cargo audit

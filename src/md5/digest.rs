@@ -1,8 +1,8 @@
 /// Initial state, RFC 1321 section 3.3.
 const INIT: [u32; 4] = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476];
 
-/// Per-step additive constants, RFC 1321 section 3.4: `T[i] = floor(2^32 *
-/// abs(sin(i + 1)))`, consumed in order by `md5_schedule!`.
+/// Per-step constants, RFC 1321 section 3.4: one for each of the 64 steps,
+/// used in order by `md5_schedule!`.
 pub(super) const T: [u32; 64] = [
     0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee, 0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
     0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be, 0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
@@ -16,18 +16,19 @@ pub(super) const T: [u32; 64] = [
 
 /// Computes the 128-bit MD5 digest of `input`.
 ///
-/// Always runs the scalar backend: a single MD5 digest is one serial
-/// dependency chain and has no lane-parallelism for SIMD to exploit. Use
-/// [`digest_many`] when several independent messages are needed at once.
+/// Always uses the scalar backend: a single digest is one long chain of
+/// dependent steps, so there's nothing for SIMD to parallelize. Use
+/// [`digest_many`] to hash several messages at once instead.
 ///
-/// Full 64-byte blocks are hashed directly out of `input` (no copy); only the
-/// final 1-2 blocks (message tail + padding + length) are staged on the stack.
+/// Full 64-byte blocks are read directly out of `input` (no copy); only the
+/// last 1-2 blocks (tail + padding + length) are staged on the stack.
 pub fn digest(input: &[u8]) -> [u8; 16] {
     digest_with(super::scalar::compress, input)
 }
 
-/// Padding and finalization, parameterized over the compression backend so the
-/// tests can drive a specific one. Monomorphizes, so `digest` pays nothing.
+/// Pads and finalizes the hash. Takes the compression function as a
+/// parameter so tests can run it against a specific backend; `digest` still
+/// compiles down to a direct call, with no overhead.
 #[inline]
 fn digest_with<F: FnMut(&mut [u32; 4], &[u8])>(mut compress_fn: F, input: &[u8]) -> [u8; 16] {
     let mut state = INIT;
@@ -43,12 +44,12 @@ fn digest_with<F: FnMut(&mut [u32; 4], &[u8])>(mut compress_fn: F, input: &[u8])
     encode(&state)
 }
 
-/// Writes `remainder` plus MD5 padding (the `0x80` marker, zeros, and
-/// `msg_len` in bits as a 64-bit little-endian integer) into `tail`, and
-/// returns how many bytes of `tail` are now a padded message.
+/// Writes `remainder` followed by MD5 padding (an `0x80` marker byte, zero
+/// bytes, and `msg_len` in bits as a little-endian 64-bit integer) into
+/// `tail`. Returns how many bytes of `tail` are now a padded message.
 ///
-/// At most one extra block is needed beyond the remainder: 1 byte for the
-/// marker + 8 bytes for the length always fit within 64 more bytes.
+/// This never needs more than one block beyond `remainder`: the 1-byte
+/// marker plus the 8-byte length always fit within 64 more bytes.
 #[inline]
 fn pad_tail(tail: &mut [u8; 128], remainder: &[u8], msg_len: usize) -> usize {
     debug_assert!(remainder.len() < 64);
@@ -62,7 +63,8 @@ fn pad_tail(tail: &mut [u8; 128], remainder: &[u8], msg_len: usize) -> usize {
     total_len
 }
 
-/// Serializes the four state words little-endian, RFC 1321 section 3.5.
+/// Writes the four state words out as bytes, little-endian (RFC 1321
+/// section 3.5).
 #[inline]
 fn encode(state: &[u32; 4]) -> [u8; 16] {
     let mut out = [0u8; 16];
@@ -74,17 +76,17 @@ fn encode(state: &[u32; 4]) -> [u8; 16] {
 
 /// Computes the MD5 digest of every message in `inputs`, in order.
 ///
-/// On a CPU with SIMD this is substantially faster than calling [`digest`] in a
-/// loop: messages are hashed in groups of up to 16 (NEON) or 8 (AVX2), one per
-/// vector lane, so a whole group costs little more than one digest. Messages
-/// within a group need not be the same length -- lanes that run out of blocks
-/// early are finished on the scalar backend.
+/// On a CPU with SIMD this is much faster than calling [`digest`] in a loop:
+/// messages are hashed in groups of up to 16 (NEON) or 8 (AVX2), one per
+/// vector lane, so a whole group costs little more than a single digest.
+/// Messages in a group don't need to be the same length -- lanes that run
+/// out of blocks early just finish up on the scalar backend.
 ///
-/// The widest backend is applied first and then narrower ones to what is left
-/// over, so a batch size that is not a multiple of the widest lane count still
-/// gets most of the benefit. Only a final remainder narrower than the narrowest
-/// backend -- and every message on a CPU without any SIMD backend -- goes
-/// through [`digest`] one at a time.
+/// The widest backend runs first, then narrower ones handle what's left, so
+/// a batch size that isn't a multiple of the widest lane count still gets
+/// most of the benefit. Only a final remainder smaller than the narrowest
+/// backend -- or every message, on a CPU with no SIMD backend -- falls back
+/// to [`digest`] one at a time.
 pub fn digest_many(inputs: &[&[u8]]) -> Vec<[u8; 16]> {
     let mut out = Vec::with_capacity(inputs.len());
     #[cfg_attr(
@@ -139,10 +141,10 @@ pub fn digest_many(inputs: &[&[u8]]) -> Vec<[u8; 16]> {
     out
 }
 
-/// Hashes every complete group of `W` messages at the front of `inputs` with
+/// Hashes every full group of `W` messages at the front of `inputs` with
 /// `compress` -- a backend that compresses one block in each of `W` lanes --
-/// appending their digests to `out`, and returns the fewer-than-`W` messages
-/// left over for a narrower backend to pick up.
+/// appending their digests to `out`. Returns whatever is left (fewer than
+/// `W` messages) for a narrower backend to pick up.
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 fn many_into<'a, const W: usize, F>(
     mut compress: F,
@@ -159,11 +161,11 @@ where
     groups.remainder()
 }
 
-/// Hashes exactly `W` messages simultaneously, one per lane.
+/// Hashes exactly `W` messages at once, one per lane.
 ///
-/// `state` and `m` are held lane-transposed (`state[word][lane]`,
-/// `m[word][lane]`) because that is the layout a vector register wants: one
-/// load yields word `word` of all `W` messages.
+/// `state` and `m` are stored "lane-transposed" (`state[word][lane]`,
+/// `m[word][lane]`) because that's the layout a vector register wants: one
+/// load grabs word `word` from all `W` messages at once.
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 fn group_digest<const W: usize, F>(compress: &mut F, group: &[&[u8]]) -> [[u8; 16]; W]
 where
@@ -171,10 +173,11 @@ where
 {
     debug_assert_eq!(group.len(), W);
 
-    // Stage each lane's padded tail once up front, so the block loops below can
-    // treat a lane as a flat sequence of `blocks[lane]` complete blocks.
+    // Pad each lane's tail once up front, so the block loops below can treat
+    // each lane as a flat sequence of `blocks[lane]` complete blocks.
     let mut tails = [[0u8; 128]; W];
-    // Blocks taken straight out of the input; later ones come from `tails`.
+    // Blocks before `aligned[lane]` come straight from the input; the rest
+    // come from `tails`.
     let mut aligned = [0usize; W];
     let mut blocks = [0usize; W];
 
@@ -190,8 +193,8 @@ where
         *slot = [init; W];
     }
 
-    // Lane-parallel phase: while every lane still has a block, all `W` advance
-    // together on the backend.
+    // Lane-parallel phase: while every lane still has a block left, advance
+    // all `W` of them together on the backend.
     let common = blocks.iter().copied().min().unwrap_or(0);
     let mut m = [[0u32; W]; 16];
     for b in 0..common {
@@ -204,7 +207,8 @@ where
         compress(&mut state, &m);
     }
 
-    // Tail phase: lanes with blocks left over (longer messages) finish alone.
+    // Tail phase: lanes with extra blocks (longer messages) finish on their
+    // own, on the scalar backend.
     let mut out = [[0u8; 16]; W];
     for lane in 0..W {
         let mut s = [
@@ -225,7 +229,7 @@ where
 }
 
 /// Returns block `b` of a padded message: the first `aligned` blocks come
-/// straight out of `input`, the remaining one or two out of the staged `tail`.
+/// straight from `input`, the last one or two come from the staged `tail`.
 #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
 #[inline]
 fn block_at<'a>(input: &'a [u8], tail: &'a [u8; 128], aligned: usize, b: usize) -> &'a [u8] {
@@ -239,7 +243,8 @@ fn block_at<'a>(input: &'a [u8], tail: &'a [u8; 128], aligned: usize, b: usize) 
 
 const HEX: &[u8; 16] = b"0123456789abcdef";
 
-/// Computes the MD5 digest of `input` and renders it as lowercase hex.
+/// Computes the MD5 digest of `input` and returns it as a lowercase hex
+/// string.
 pub fn hex_digest(input: &[u8]) -> String {
     let bytes = digest(input);
     let mut out = Vec::with_capacity(32);
@@ -319,26 +324,26 @@ mod tests {
 
     #[test]
     fn million_a() {
-        // Long enough to exercise a backend's steady-state block loop
-        // (15,625 blocks) rather than just its padding path.
+        // Long enough to hit a backend's steady-state block loop, not just
+        // its padding path.
         let input = vec![b'a'; 1_000_000];
         assert_eq!(hex_digest(&input), "7707d6ae4e027c70eea2a935c2296f21");
     }
 
     #[test]
     fn block_boundary_lengths() {
-        // Cross-check the stack-buffer tail path in `digest` against an
-        // independently padded (heap-allocated) reference, across every
-        // length that changes how many blocks the tail occupies.
+        // Check the stack-buffer tail path in `digest` against an
+        // independent, heap-allocated reference, at every length that
+        // changes how many blocks the tail occupies.
         for len in [0usize, 1, 55, 56, 57, 63, 64, 65, 119, 120, 121, 128, 200] {
             let input = pattern(len);
             assert_eq!(digest(&input), reference_digest(&input), "len = {len}");
         }
     }
 
-    /// Ground truth for `block_boundary_lengths`: pads by fully materializing
-    /// the message (the straightforward, non-optimized approach) rather than
-    /// staging only the tail on the stack.
+    /// Reference for `block_boundary_lengths`: pads by building the whole
+    /// message on the heap, the simple way, instead of staging just the
+    /// tail on the stack.
     fn reference_digest(input: &[u8]) -> [u8; 16] {
         let mut state = super::INIT;
 
@@ -359,26 +364,26 @@ mod tests {
         (0..len).map(|i| (i % 251) as u8).collect()
     }
 
-    /// Lengths chosen around every boundary that changes block/padding layout,
-    /// plus sizes large enough to cover a backend's steady state.
+    /// Lengths around every boundary that changes block/padding layout, plus
+    /// some large enough to cover a backend's steady state.
     const LENGTHS: [usize; 27] = [
         0, 1, 55, 56, 57, 63, 64, 65, 119, 120, 121, 127, 128, 129, 191, 192, 200, 255, 256, 257,
         1023, 1024, 1025, 4096, 4097, 65536, 100_000,
     ];
 
-    /// The lane-parallel backends must agree with the scalar reference
-    /// bit-for-bit, for every message in a group and for every mix of lengths.
+    /// Every SIMD backend must agree with the scalar reference bit-for-bit,
+    /// for every message in a group and every mix of lengths.
     ///
-    /// This calls the hardware backend *directly* rather than through
-    /// `digest_many`, so it cannot silently degenerate into comparing the
-    /// scalar backend against itself. On a target without a SIMD backend
-    /// nothing is checked and the test reports that.
+    /// This calls each hardware backend *directly* rather than through
+    /// `digest_many`, so the test can't accidentally end up comparing the
+    /// scalar backend against itself. On a target with no SIMD backend,
+    /// nothing is checked, and the test says so.
     #[test]
     fn matches_scalar_backend() {
         #[cfg(target_arch = "aarch64")]
         {
-            // Every width `digest_many` can step down through. SAFETY: `neon`
-            // is guaranteed by the aarch64 target baseline.
+            // Every width `digest_many` can step down through. SAFETY:
+            // `neon` is always available on aarch64.
             check_backend::<4, _>(
                 |s, m| unsafe { crate::md5::aarch64::compress4(s, m) },
                 "neon",
@@ -395,7 +400,7 @@ mod tests {
 
         #[cfg(target_arch = "x86_64")]
         {
-            // SAFETY: `sse2` is guaranteed by the x86-64 target baseline.
+            // SAFETY: `sse2` is always available on x86-64.
             check_backend::<4, _>(|s, m| unsafe { crate::md5::x86::compress4(s, m) }, "sse2");
 
             if std::arch::is_x86_feature_detected!("avx2") {
@@ -410,16 +415,16 @@ mod tests {
         println!("no SIMD MD5 backend on this target; only the scalar path is in use");
     }
 
-    /// Drives one backend through `super::many_into` over several
-    /// message-length mixes and compares every digest against `digest`.
+    /// Runs one backend through `super::many_into` over several message-length
+    /// mixes and compares every digest against `digest`.
     #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
     fn check_backend<const W: usize, F>(mut compress: F, name: &str)
     where
         F: FnMut(&mut [[u32; W]; 4], &[[u32; W]; 16]) + Copy,
     {
-        /// Hashes one group through the backend alone, with no width cascade
-        /// and no scalar fallback for a short group, so a disagreement cannot
-        /// be masked by another path picking up the work.
+        /// Hashes one group using only this backend -- no width fallback and
+        /// no scalar backend for a short group -- so a mismatch can't be
+        /// hidden by another path picking up the work.
         fn only<const W: usize, F>(compress: &mut F, group: &[&[u8]]) -> Vec<[u8; 16]>
         where
             F: FnMut(&mut [[u32; W]; 4], &[[u32; W]; 16]),
@@ -431,9 +436,8 @@ mod tests {
             out
         }
 
-        // Recorded so that a CI log (run with `--nocapture`) shows which
-        // backends the machine actually had the features to execute, rather
-        // than leaving it to be inferred from the target triple.
+        // Printed so a CI log (with `--nocapture`) shows which backends the
+        // machine actually ran, instead of guessing from the target triple.
         println!("exercising the {name} backend at {W} lanes against scalar");
 
         // Uniform lengths: every lane finishes on the same block, so the
@@ -449,7 +453,7 @@ mod tests {
         }
 
         // Ragged lengths: lanes run out of blocks at different times, so the
-        // scalar tail phase takes over for some lanes and not others. Every
+        // scalar tail phase takes over for some lanes but not others. Every
         // rotation is tried so each length lands in each lane.
         let inputs: Vec<Vec<u8>> = LENGTHS.iter().map(|&len| pattern(len)).collect();
         for offset in 0..inputs.len() {
@@ -464,8 +468,8 @@ mod tests {
             );
         }
 
-        // Several groups in one call, so the state really is reinitialized per
-        // group rather than carried over.
+        // Several groups in one call, to check the state is reset for each
+        // group instead of carried over from the last one.
         let group: Vec<&[u8]> = (0..3 * W)
             .map(|i| inputs[i % inputs.len()].as_slice())
             .collect();
@@ -477,24 +481,24 @@ mod tests {
         );
     }
 
-    /// The public API must route through whichever backend is active and still
-    /// produce the same digests as hashing each message on its own.
+    /// The public API must use whichever backend is active and still produce
+    /// the same digests as hashing each message on its own.
     #[test]
     fn digest_many_matches_digest() {
         assert!(digest_many(&[]).is_empty());
 
         let inputs: Vec<Vec<u8>> = LENGTHS.iter().map(|&len| pattern(len)).collect();
 
-        // Every prefix: covers all remainder sizes for any lane width, with a
-        // different length mix in each group.
+        // Every prefix: covers every possible remainder size, with a
+        // different mix of lengths each time.
         for count in 0..=inputs.len() {
             let group: Vec<&[u8]> = inputs[..count].iter().map(Vec::as_slice).collect();
             let expected: Vec<[u8; 16]> = group.iter().map(|input| digest(input)).collect();
             assert_eq!(digest_many(&group), expected, "count = {count}");
         }
 
-        // Many identical messages: the common case, and the one where every
-        // lane stays in the lane-parallel phase to the very last block.
+        // Many identical messages: the common case, where every lane stays
+        // in the lane-parallel phase right up to the last block.
         let input = pattern(10_000);
         let group: Vec<&[u8]> = vec![&input; 33];
         assert_eq!(digest_many(&group), vec![digest(&input); 33]);
@@ -509,11 +513,12 @@ mod tests {
         let mib = TOTAL as f64 / (1024.0 * 1024.0);
         let (backend, lanes) = active_backend();
 
-        // Single message: no lane-parallelism to exploit, so this measures the
-        // scalar backend and is the baseline the batch figure is compared to.
+        // Single message: nothing to parallelize, so this times the scalar
+        // backend, giving the baseline the batch figure is compared against.
         let data = vec![0x61u8; TOTAL];
-        // A single cold pass over a fresh 64 MiB buffer measures page faults and
-        // clock ramp as much as MD5, so warm up and report the best of several.
+        // A cold pass over a fresh 64 MiB buffer mostly measures page faults
+        // and clock ramp-up, not MD5. So warm up first and keep the best of
+        // several runs.
         std::hint::black_box(digest(&data));
         let mut single = 0.0f64;
         let mut d = [0u8; 16];
@@ -524,9 +529,9 @@ mod tests {
         }
         println!("md5 single [scalar]: {mib:.0} MiB, best {single:.1} MiB/s (digest {d:02x?})");
 
-        // Batch: the same 64 MiB split into independent messages, which is what
-        // `digest_many` can put one-per-lane. 64 KiB each is large enough that
-        // per-message setup is negligible and small enough to stay cache-warm.
+        // Batch: the same 64 MiB split into independent messages, one per
+        // lane. 64 KiB each is big enough that per-message overhead is
+        // negligible, and small enough to stay cache-warm.
         const MSG: usize = 64 * 1024;
         let messages: Vec<&[u8]> = data.chunks_exact(MSG).collect();
         std::hint::black_box(digest_many(&messages));
