@@ -1,0 +1,39 @@
+name: Benchmarks
+
+# Manual only. Shared runners are too noisy for benchmark numbers to gate a
+# merge, but they are the only real x86 hardware -- and the only non-Apple
+# aarch64 -- the project has. Compare figures *within* one job, where cryptors
+# and Go ran on the same machine minutes apart, never across jobs or runs.
+on:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  bench:
+    name: Benchmark (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # x86-64: where every single-message SHA-3 digest runs on the scalar
+        # backend, and where SHA-224/SHA-256 use SHA-NI if the runner's CPU has
+        # it. The SHA-256 throughput test also times the AVX2, BMI and baseline
+        # scalar backends, the paths CPUs without SHA-NI take. aarch64: whether
+        # FEAT_SHA3, if the runner has it, still beats scalar on a non-Apple
+        # core -- Go's crypto/sha3 assumes it doesn't.
+        runner: [ubuntu-latest, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.95
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: bench/sha3cmp/go.mod
+          # The bench modules have no dependencies, so nothing to cache.
+          cache: false
+      # The model and feature flags, so each set of numbers can be tied to the
+      # CPU that produced it.
+      - run: lscpu
+      - run: make bench-throughput
+      - run: make bench-go
