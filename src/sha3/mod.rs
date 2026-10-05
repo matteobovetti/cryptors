@@ -21,12 +21,12 @@
 //!
 //! | Backend | Architecture | Requires | Messages at once |
 //! |---------|--------------|----------|------------------|
-//! | [`aarch64`] (FEAT_SHA3) | AArch64 | `sha3` | 1 |
-//! | [`scalar`], BMI1/BMI2 build | x86-64 | `bmi1` and `bmi2` | 1 |
-//! | [`scalar`] | any | nothing -- always available | 1 |
+//! | `aarch64` (FEAT_SHA3) | AArch64 | `sha3` | 1 |
+//! | `scalar`, BMI1/BMI2 build | x86-64 | `bmi1` and `bmi2` | 1 |
+//! | `scalar` | any | nothing -- always available | 1 |
 //!
 //! **No x86 CPU implements Keccak.** SHA-NI covers SHA-1 and SHA-256 only, so
-//! a single message on x86 runs on [`scalar`]. Where the CPU has BMI1 and
+//! a single message on x86 runs on `scalar`. Where the CPU has BMI1 and
 //! BMI2, it runs a second build of the same code that uses their `andn` and
 //! `rorx`, which cuts about a quarter of the instructions in every round.
 //! Plain SIMD does not help a single message: Keccak's 25-lane state and
@@ -40,10 +40,10 @@
 //!
 //! | Backend | Architecture | Requires | Messages at once |
 //! |---------|--------------|----------|------------------|
-//! | [`x86`] (AVX2) | x86-64 | `avx2` | 4 |
-//! | [`x86`] (SSE2) | x86-64 | `sse2` -- always on x86-64 | 2 |
-//! | [`aarch64`] (FEAT_SHA3) | AArch64 | `sha3` | 2 |
-//! | [`scalar`] | any | nothing -- always available | 1 |
+//! | `x86` (AVX2) | x86-64 | `avx2` | 4 |
+//! | `x86` (SSE2) | x86-64 | `sse2` -- always on x86-64 | 2 |
+//! | `aarch64` (FEAT_SHA3) | AArch64 | `sha3` | 2 |
+//! | `scalar` | any | nothing -- always available | 1 |
 //!
 //! The manual `Benchmarks` workflow (`.github/workflows/bench.yml`) measures
 //! the backends on real x86-64 and AArch64 runners.
@@ -54,10 +54,37 @@
 //! multi-buffer backend gets the SHA-3 extension's fused instructions *and*
 //! two messages per register from the same code.
 //!
-//! [`scalar`] is the backend we trust to be correct; every other backend is
+//! `scalar` is the backend we trust to be correct; every other backend is
 //! checked against it byte-for-byte by the `matches_scalar_backend` test, and
-//! [`scalar`] itself is checked against FIPS 202's own vectors and against a
+//! `scalar` itself is checked against FIPS 202's own vectors and against a
 //! second, independently written permutation.
+//!
+//! # Example
+//!
+//! ```
+//! use cryptors::sha3;
+//!
+//! let digest: [u8; 32] = sha3::sha3_256(b"abc");
+//! assert_eq!(
+//!     sha3::sha3_256_hex(b"abc"),
+//!     "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532"
+//! );
+//! assert_eq!(digest[0], 0x3a);
+//!
+//! // SHAKE writes as many bytes as the output buffer holds.
+//! let mut xof = [0u8; 32];
+//! sha3::shake128(b"", &mut xof);
+//! assert_eq!(
+//!     sha3::shake128_hex(b"", 32),
+//!     "7f9c2ba4e88f827d616045507605853ed73b8093f6efbc88eb1a6eacfa66ef26"
+//! );
+//! assert_eq!(xof[0], 0x7f);
+//!
+//! // Several independent messages, hashed side by side where the CPU allows.
+//! let digests = sha3::sha3_256_many(&[b"abc", b"", b"a longer message"]);
+//! assert_eq!(digests.len(), 3);
+//! assert_eq!(digests[0], digest);
+//! ```
 
 /// One round of Keccak-f\[1600\], written once and shared by every vector
 /// backend.
@@ -93,6 +120,7 @@
 /// from FIPS 202 Algorithm 2 (`(x, y) -> (y, 2x + 3y)`, rotating by the
 /// triangular numbers mod 64); lane 0 is the one fixed point, and rotates by
 /// zero, so it uses a plain `$xor!`.
+#[cfg(any(test, target_arch = "aarch64", target_arch = "x86_64"))]
 macro_rules! keccak_round {
     (
         $xor5:ident, $rax1:ident, $xar:ident, $xor:ident, $bcax:ident,
@@ -179,6 +207,7 @@ macro_rules! keccak_round {
 ///
 /// `$rc` is a macro that widens [`digest::RC`]`[i]` to the backend's value
 /// type, so a vector backend broadcasts the constant across its lanes.
+#[cfg(any(test, target_arch = "aarch64", target_arch = "x86_64"))]
 macro_rules! keccak_rounds {
     (
         $xor5:ident, $rax1:ident, $xar:ident, $xor:ident, $bcax:ident,

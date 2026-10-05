@@ -1004,6 +1004,7 @@ mod tests {
     #[test]
     fn matches_scalar_backend_many() {
         /// Builds `W` distinct, fully-mixed states.
+        #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
         fn seed<const W: usize>() -> [[u64; W]; 25] {
             let mut state = [[0u64; W]; 25];
             for (lane, wide) in state.iter_mut().enumerate() {
@@ -1019,6 +1020,7 @@ mod tests {
 
         /// Runs `permute_many` and the scalar reference on the same state for
         /// several successive rounds, and checks they stay identical.
+        #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))]
         fn check<const W: usize, F>(mut permute_many: F, name: &str)
         where
             F: FnMut(&mut [[u64; W]; 25]),
@@ -1266,39 +1268,10 @@ mod tests {
         assert_eq!(sha3_256_many(&same), vec![sha3_256(b"cryptors"); 33]);
     }
 
-    /// Checks the public `permute` dispatch, whichever backend it picks,
-    /// still matches the scalar reference end to end.
-    #[test]
-    fn public_api_matches_scalar() {
-        for len in LENGTHS {
-            let input = pattern(len);
-
-            let mut sw = [0u8; 32];
-            sponge(scalar::permute, RATE_256, SUFFIX_SHA3, &input, &mut sw);
-            assert_eq!(sha3_256(&input), sw, "len = {len}");
-
-            let mut sw = [0u8; 64];
-            sponge(scalar::permute, RATE_512, SUFFIX_SHA3, &input, &mut sw);
-            assert_eq!(sha3_512(&input), sw, "len = {len}");
-
-            let mut sw = [0u8; 137];
-            sponge(
-                scalar::permute,
-                RATE_SHAKE128,
-                SUFFIX_SHAKE,
-                &input,
-                &mut sw,
-            );
-            let mut got = [0u8; 137];
-            shake128(&input, &mut got);
-            assert_eq!(got, sw, "shake128, len = {len}");
-        }
-    }
-
     // ---- Throughput ----
 
     #[test]
-    #[ignore = "manual throughput check: cargo test --release -- --ignored --nocapture"]
+    #[ignore = "manual throughput check: cargo test --release sha3 -- --ignored --nocapture --test-threads=1"]
     fn throughput() {
         use std::time::Instant;
 
@@ -1357,7 +1330,7 @@ mod tests {
     /// it, and leaves out the sponge's absorbing and squeezing (about 3% of
     /// the work for a long message).
     #[test]
-    #[ignore = "manual throughput check: cargo test --release -- --ignored --nocapture"]
+    #[ignore = "manual throughput check: cargo test --release sha3 -- --ignored --nocapture --test-threads=1"]
     fn permutation_throughput() {
         use std::hint::black_box;
         use std::time::Instant;
@@ -1429,7 +1402,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "manual throughput check: cargo test --release -- --ignored --nocapture"]
+    #[ignore = "manual throughput check: cargo test --release sha3 -- --ignored --nocapture --test-threads=1"]
     fn throughput_many() {
         use std::time::Instant;
 

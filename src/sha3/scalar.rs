@@ -27,7 +27,7 @@
 //! when built with BMI1/BMI2.
 //!
 //! The round is still written in terms of the same five operations. The
-//! test-only [`permute_many`] below still drives the shared macro, so
+//! test-only `permute_many` below still drives the shared macro, so
 //! `scalar_many_matches_scalar` checks the two formulations against each
 //! other.
 
@@ -253,7 +253,7 @@ macro_rules! keccak_round_in_place {
 
 /// All 24 rounds, four per loop iteration so the state is in normal order at
 /// every iteration boundary. Shared by [`permute`] and, on x86-64,
-/// [`permute_bmi`], which differ only in the instructions they are compiled to.
+/// `permute_bmi`, which differ only in the instructions they are compiled to.
 #[inline(always)]
 fn rounds(state: &mut [u64; 25]) {
     for &[rc0, rc1, rc2, rc3] in RC.as_chunks::<4>().0 {
@@ -301,7 +301,7 @@ pub(super) unsafe fn permute_bmi(state: &mut [u64; 25]) {
 ///
 /// `W` is read from the enclosing function's const parameter.
 ///
-/// These, and [`permute_many`] below, exist only to validate the SIMD
+/// These, and `permute_many` below, exist only to validate the SIMD
 /// multi-buffer backends, so they are compiled under `cfg(test)`: a portable
 /// batch of `W` is no faster than `W` separate calls to [`permute`], and
 /// shipping it as a fallback would only be dead weight.
