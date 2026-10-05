@@ -16,12 +16,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # x86-64: where every single-message SHA-3 digest runs on the scalar
+        # x86-64: where every single-message SHA-3 digest and every 64-bit
+        # SHA-2 digest (SHA-384, SHA-512, SHA-512/t) runs on the scalar
         # backend, and where SHA-224/SHA-256 use SHA-NI if the runner's CPU has
         # it. The SHA-256 throughput test also times the AVX2, BMI and baseline
         # scalar backends, the paths CPUs without SHA-NI take. aarch64: whether
         # FEAT_SHA3, if the runner has it, still beats scalar on a non-Apple
-        # core -- Go's crypto/sha3 assumes it doesn't.
+        # core -- Go's crypto/sha3 assumes it doesn't -- and whether FEAT_SHA512
+        # (reported under the same feature) does the same for SHA-512.
         runner: [ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
     steps:

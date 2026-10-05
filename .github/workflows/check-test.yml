@@ -1,4 +1,4 @@
-name: Cargo Check and Test
+name: Cargo Check, Build and Test
 
 on:
   push:
@@ -9,55 +9,67 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-Dwarnings"
-  SCCACHE_GHA_ENABLED: "true"
-  CC: "sccache cc"
-  CXX: "sccache c++"
+
+permissions:
+  contents: read
 
 jobs:
-  check:
-    name: Check
-    runs-on: ubuntu-latest
+  ci:
+    name: Rust ${{ matrix.rust }} / ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        # The five most recent stable releases. The oldest is `rust-version`
+        # in Cargo.toml, so it doubles as the MSRV check: raise both together.
+        rust: ["1.99", "1.98", "1.97", "1.96", "1.95"]
+        # Each arch is a different set of backends:
+        #   x86_64  -- SSE2 always, plus whatever the runner's CPU adds
+        #              (AVX2, SHA-NI, BMI).
+        #   aarch64 -- NEON, plus FEAT_SHA1/SHA256/SHA3/SHA512 where the
+        #              runner's cores have them. A native runner, so the
+        #              crypto extensions run on silicon, not emulation.
+        #   scalar  -- a target with no hardware backend at all, so the
+        #              portable code that every other backend is checked
+        #              against is also the only code that runs. RISC-V is
+        #              64-bit like the others and has none of our backends.
+        #              No RISC-V runners exist, so QEMU user-mode runs it.
+        arch: [x86_64, aarch64, scalar]
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - arch: scalar
+            runner: ubuntu-latest
+            target: riscv64gc-unknown-linux-gnu
     steps:
       - uses: actions/checkout@v7
-      - uses: jlumbroso/free-disk-space@main
-      - uses: dtolnay/rust-toolchain@1.95
-      - uses: Swatinem/rust-cache@v2
-      - uses: mozilla-actions/sccache-action@v0.0.11
-      - run: sudo apt-get install -y protobuf-compiler
-      - run: cargo check --all
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: jlumbroso/free-disk-space@main
-      - uses: dtolnay/rust-toolchain@1.95
-      - uses: Swatinem/rust-cache@v2
-      - uses: mozilla-actions/sccache-action@v0.0.11
-      - run: sudo apt-get install -y protobuf-compiler
-      # `--nocapture` so the log records which x86 backends this runner's CPU
-      # had the features to execute -- SSE2 is baseline, AVX2 is not.
-      - run: cargo test --all -- --nocapture
-  test-aarch64:
-    # The runners are all x86_64, so the aarch64 backends would otherwise never
-    # be compiled in CI, let alone run. QEMU user-mode emulation is slower than
-    # native but executes the real NEON instructions, so the differential tests
-    # against the scalar reference genuinely cover them. The throughput tests
-    # are `#[ignore]`d and so stay out of the emulated run.
-    name: Test (aarch64, emulated)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: jlumbroso/free-disk-space@main
-      - uses: dtolnay/rust-toolchain@1.95
+      # `@master` because the action's version tags are the toolchain names,
+      # and a tag for a release this new may not exist yet; `toolchain:` picks
+      # the release and works for every entry in the matrix.
+      - uses: dtolnay/rust-toolchain@master
         with:
-          targets: aarch64-unknown-linux-gnu
+          toolchain: ${{ matrix.rust }}
+          targets: ${{ matrix.target }}
       # Installs the cross linker and registers QEMU as the cargo test runner
       # for this target, so `cargo test --target` just works.
       - uses: taiki-e/setup-cross-toolchain-action@v1
+        if: matrix.arch == 'scalar'
         with:
-          target: aarch64-unknown-linux-gnu
+          target: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
-      - uses: mozilla-actions/sccache-action@v0.0.11
-      - run: sudo apt-get install -y protobuf-compiler
-      - run: cargo test --all --target aarch64-unknown-linux-gnu -- --nocapture
+        with:
+          key: ${{ matrix.arch }}
+      - run: cargo check --all --target ${{ matrix.target }}
+      - run: cargo build --all --target ${{ matrix.target }}
+      # The release profile is LTO with one codegen unit, which can compile
+      # the intrinsics differently from the dev profile.
+      - run: cargo build --all --release --target ${{ matrix.target }}
+      # `--nocapture` so the log records which backends this runner's CPU had
+      # the features to execute. The throughput tests are `#[ignore]`d and so
+      # stay out of this run, which matters most under emulation.
+      - run: cargo test --all --target ${{ matrix.target }} -- --nocapture
