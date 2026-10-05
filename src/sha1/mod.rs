@@ -5,12 +5,25 @@
 //!
 //! | Backend | Requires | Relative speed |
 //! |---------|----------|----------------|
-//! | [`aarch64`] | ARMv8 crypto extensions (`sha2` / FEAT_SHA1) | ~2.8x |
-//! | [`x86`] | x86 SHA extensions (SHA-NI) | hardware-dependent |
-//! | [`scalar`] | nothing -- always available | 1x (reference) |
+//! | `aarch64` | ARMv8 crypto extensions (`sha2` / FEAT_SHA1) | ~2.8x |
+//! | `x86` | x86 SHA extensions (SHA-NI) | hardware-dependent |
+//! | `scalar` | nothing -- always available | 1x (reference) |
 //!
 //! `scalar` is the one we trust to be correct; the test `matches_scalar_backend`
 //! checks the hardware backends produce the same output as it.
+//!
+//! # Example
+//!
+//! ```
+//! use cryptors::{Digest, sha1::Sha1};
+//!
+//! let digest: [u8; 20] = Sha1::digest(b"abc");
+//! assert_eq!(
+//!     Sha1::hex_digest(b"abc"),
+//!     "a9993e364706816aba3e25717850c26c9cd0d89d"
+//! );
+//! assert_eq!(digest[0], 0xa9);
+//! ```
 
 #[cfg(target_arch = "aarch64")]
 mod aarch64;
@@ -21,4 +34,4 @@ mod x86;
 
 use digest::K;
 
-pub use digest::{digest, hex_digest};
+pub use digest::Sha1;

@@ -1,3 +1,5 @@
+use crate::Digest;
+
 /// Initial hash state (RFC 3174 section 6.1).
 const INIT: [u32; 5] = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0];
 
@@ -45,12 +47,31 @@ fn compress(state: &mut [u32; 5], blocks: &[u8]) {
     super::scalar::compress(state, blocks);
 }
 
-/// Computes the 160-bit SHA-1 digest of `input`.
+/// SHA-1 (RFC 3174): a 160-bit digest.
 ///
-/// Full blocks are hashed straight out of `input` without copying; only the
-/// last partial block (plus padding) is copied onto the stack.
-pub fn digest(input: &[u8]) -> [u8; 20] {
-    digest_with(compress, input)
+/// A zero-sized namespace for the hashing functions; it holds no state.
+///
+/// ```
+/// use cryptors::{Digest, sha1::Sha1};
+///
+/// assert_eq!(Sha1::digest(b"abc")[0], 0xa9);
+/// ```
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub struct Sha1;
+
+impl Digest for Sha1 {
+    const BLOCK_LEN: usize = 64;
+    const OUTPUT_LEN: usize = 20;
+    type Output = [u8; 20];
+
+    /// Computes the 160-bit SHA-1 digest of `input`.
+    ///
+    /// Full blocks are hashed straight out of `input` without copying; only
+    /// the last partial block (plus padding) is copied onto the stack.
+    fn digest(input: &[u8]) -> [u8; 20] {
+        digest_with(compress, input)
+    }
 }
 
 /// Does the padding and final hashing step. Takes the backend as a parameter
@@ -83,23 +104,10 @@ fn digest_with<F: FnMut(&mut [u32; 5], &[u8])>(mut compress_fn: F, input: &[u8])
     out
 }
 
-const HEX: &[u8; 16] = b"0123456789abcdef";
-
-/// Computes the SHA-1 digest of `input` and renders it as lowercase hex.
-pub fn hex_digest(input: &[u8]) -> String {
-    let bytes = digest(input);
-    let mut out = Vec::with_capacity(40);
-    for b in bytes {
-        out.push(HEX[(b >> 4) as usize]);
-        out.push(HEX[(b & 0xf) as usize]);
-    }
-    // SAFETY: `out` only ever contains bytes from the `HEX` table, which is ASCII.
-    unsafe { String::from_utf8_unchecked(out) }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{digest, digest_with, hex_digest};
+    use super::{Sha1, digest_with};
+    use crate::Digest;
     use crate::sha1::scalar;
 
     /// Which backend `compress` picks on this machine.
@@ -117,14 +125,17 @@ mod tests {
 
     #[test]
     fn empty_string() {
-        assert_eq!(hex_digest(b""), "da39a3ee5e6b4b0d3255bfef95601890afd80709");
+        assert_eq!(
+            Sha1::hex_digest(b""),
+            "da39a3ee5e6b4b0d3255bfef95601890afd80709"
+        );
     }
 
     #[test]
     fn abc() {
         // RFC 3174 section 7.3, test 1.
         assert_eq!(
-            hex_digest(b"abc"),
+            Sha1::hex_digest(b"abc"),
             "a9993e364706816aba3e25717850c26c9cd0d89d"
         );
     }
@@ -133,7 +144,7 @@ mod tests {
     fn two_block_message() {
         // RFC 3174 section 7.3, test 2.
         assert_eq!(
-            hex_digest(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+            Sha1::hex_digest(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
             "84983e441c3bd26ebaae4aa1f95129e5e54670f1"
         );
     }
@@ -145,7 +156,7 @@ mod tests {
         // exercise a hardware backend's main loop.
         let input = vec![b'a'; 1_000_000];
         assert_eq!(
-            hex_digest(&input),
+            Sha1::hex_digest(&input),
             "34aa973cd4c4daa4f61eeb2bdbad27316534016f"
         );
     }
@@ -155,7 +166,7 @@ mod tests {
         // RFC 3174 section 7.3, test 4: 10 repetitions of a 64-char string.
         let input = "0123456701234567012345670123456701234567012345670123456701234567".repeat(10);
         assert_eq!(
-            hex_digest(input.as_bytes()),
+            Sha1::hex_digest(input.as_bytes()),
             "dea356a2cddd90c7a7ecedc5ebb563934f460452"
         );
     }
@@ -163,7 +174,7 @@ mod tests {
     #[test]
     fn quick_brown_fox() {
         assert_eq!(
-            hex_digest(b"The quick brown fox jumps over the lazy dog"),
+            Sha1::hex_digest(b"The quick brown fox jumps over the lazy dog"),
             "2fd4e1c67a2d28fced849ee1bb76e7391b93eb12"
         );
     }
@@ -171,7 +182,7 @@ mod tests {
     #[test]
     fn message_digest() {
         assert_eq!(
-            hex_digest(b"message digest"),
+            Sha1::hex_digest(b"message digest"),
             "c12252ceda8be8994d5fa0290a47231c1d16aae3"
         );
     }
@@ -180,7 +191,7 @@ mod tests {
     fn crosses_multiple_blocks() {
         let input = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
         assert_eq!(
-            hex_digest(input),
+            Sha1::hex_digest(input),
             "f43b04e4a98aebe3c874514f11a73dbd7d6c150b"
         );
     }
@@ -193,6 +204,10 @@ mod tests {
     /// scalar backend against itself. If the CPU doesn't support that
     /// backend, its part of the test is just skipped.
     #[test]
+    #[cfg_attr(
+        not(any(target_arch = "aarch64", target_arch = "x86_64")),
+        allow(unused_variables, unused_mut)
+    )]
     fn matches_scalar_backend() {
         // These lengths cover every point where the padding/block layout
         // changes, plus a few large sizes to exercise the main loop.
@@ -320,22 +335,8 @@ mod tests {
         out
     }
 
-    /// Checks that the public `digest` function, through whichever backend
-    /// it picks, still matches the scalar reference.
     #[test]
-    fn public_api_matches_scalar() {
-        for len in [0usize, 63, 64, 65, 1024, 100_000] {
-            let input: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
-            assert_eq!(
-                digest(&input),
-                digest_with(scalar::compress, &input),
-                "len = {len}"
-            );
-        }
-    }
-
-    #[test]
-    #[ignore = "manual throughput check: cargo test --release -- --ignored --nocapture"]
+    #[ignore = "manual throughput check: cargo test --release sha1 -- --ignored --nocapture --test-threads=1"]
     fn throughput() {
         use std::time::Instant;
 
@@ -345,13 +346,13 @@ mod tests {
         // The first pass over a fresh buffer is slowed down by page faults and
         // CPU clock ramp-up, not just SHA-1 itself. So we warm up once, then
         // time several runs and keep the best.
-        std::hint::black_box(digest(&data));
+        std::hint::black_box(Sha1::digest(&data));
 
         let mut best = 0.0f64;
         let mut d = [0u8; 20];
         for _ in 0..5 {
             let start = Instant::now();
-            d = digest(&data);
+            d = Sha1::digest(&data);
             let elapsed = start.elapsed();
             best = best.max(mib / elapsed.as_secs_f64());
         }
