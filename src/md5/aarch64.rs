@@ -24,11 +24,11 @@
 //! vector registers and partly spill, but they're off the critical chain and
 //! stay in L1 cache.
 //!
-//! All three widths exist so `super::digest::digest_many` can step down
+//! All three widths exist so `super::digest::digest_batch` can step down
 //! through them, keeping a batch that isn't a multiple of 16 mostly off the
 //! scalar path.
 //!
-//! Only reachable through `super::digest::digest_many`, which checks for the
+//! Only reachable through `super::digest::digest_batch`, which checks for the
 //! `neon` feature first (though it's always available on aarch64 anyway).
 
 use core::arch::aarch64::*;
@@ -133,7 +133,7 @@ unsafe fn compress_lanes<const W: usize, const H: usize>(
 /// # Safety
 ///
 /// The caller must make sure `neon` is available on this CPU.
-/// `super::digest::digest_many` is the only caller and checks this.
+/// `super::digest::digest_batch` is the only caller and checks this.
 #[target_feature(enable = "neon")]
 pub(super) unsafe fn compress4(state: &mut [[u32; 4]; 4], m: &[[u32; 4]; 16]) {
     // SAFETY: the caller's obligation is exactly this function's own.
@@ -145,7 +145,7 @@ pub(super) unsafe fn compress4(state: &mut [[u32; 4]; 4], m: &[[u32; 4]; 16]) {
 /// # Safety
 ///
 /// The caller must make sure `neon` is available on this CPU.
-/// `super::digest::digest_many` is the only caller and checks this.
+/// `super::digest::digest_batch` is the only caller and checks this.
 #[target_feature(enable = "neon")]
 pub(super) unsafe fn compress8(state: &mut [[u32; 8]; 4], m: &[[u32; 8]; 16]) {
     // SAFETY: the caller's obligation is exactly this function's own.
@@ -158,7 +158,7 @@ pub(super) unsafe fn compress8(state: &mut [[u32; 8]; 4], m: &[[u32; 8]; 16]) {
 /// # Safety
 ///
 /// The caller must make sure `neon` is available on this CPU.
-/// `super::digest::digest_many` is the only caller and checks this.
+/// `super::digest::digest_batch` is the only caller and checks this.
 #[target_feature(enable = "neon")]
 pub(super) unsafe fn compress16(state: &mut [[u32; 16]; 4], m: &[[u32; 16]; 16]) {
     // SAFETY: the caller's obligation is exactly this function's own.

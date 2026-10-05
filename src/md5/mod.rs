@@ -14,21 +14,36 @@
 //!
 //! # What is accelerated: hashing many messages at once
 //!
-//! Different *messages* are independent, though. [`digest_many`] uses that:
+//! Different *messages* are independent, though. [`Md5::digest_many`](crate::Digest::digest_many) uses that:
 //! it puts one message per SIMD lane and runs several digests side by side,
 //! getting several hashes for the price of one dependency chain:
 //!
 //! | Backend | Requires | Messages at once |
 //! |---------|----------|-------|
-//! | [`x86`] (AVX2) | `avx2` | 8 |
-//! | [`x86`] (SSE2) | `sse2` -- always on x86-64 | 4 |
-//! | [`aarch64`] (NEON) | `neon` -- always on aarch64 | 4 |
-//! | [`scalar`] | nothing -- always available | 1 (reference) |
+//! | `x86` (AVX2) | `avx2` | 8 |
+//! | `x86` (SSE2) | `sse2` -- always on x86-64 | 4 |
+//! | `aarch64` (NEON) | `neon` -- always on aarch64 | 4 |
+//! | `scalar` | nothing -- always available | 1 (reference) |
 //!
-//! [`digest`] always uses the scalar backend, since a single message can't
-//! be sped up. [`digest_many`] is where the SIMD backends actually help. The
+//! [`Md5::digest`](crate::Digest::digest) always uses the scalar backend, since a single message can't
+//! be sped up. [`Md5::digest_many`](crate::Digest::digest_many) is where the SIMD backends actually help. The
 //! scalar backend also serves as the correctness reference: every SIMD
 //! backend is checked against it by the `matches_scalar_backend` test.
+//!
+//! # Example
+//!
+//! ```
+//! use cryptors::{Digest, md5::Md5};
+//!
+//! let digest: [u8; 16] = Md5::digest(b"abc");
+//! assert_eq!(Md5::hex_digest(b"abc"), "900150983cd24fb0d6963f7d28e17f72");
+//! assert_eq!(digest[0], 0x90);
+//!
+//! // Several independent messages, hashed side by side in SIMD lanes.
+//! let digests = Md5::digest_many(&[b"abc", b"", b"a longer message"]);
+//! assert_eq!(digests.len(), 3);
+//! assert_eq!(digests[0], digest);
+//! ```
 
 /// The MD5 round schedule (RFC 1321 section 3.4): for each of the 64 steps,
 /// which nonlinear function to use, the four state variables in order, which
@@ -124,4 +139,4 @@ mod x86;
 
 use digest::T;
 
-pub use digest::{digest, digest_many, hex_digest};
+pub use digest::Md5;

@@ -1,3 +1,5 @@
+use crate::Digest;
+
 /// Initial state, RFC 1321 section 3.3.
 const INIT: [u32; 4] = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476];
 
@@ -14,16 +16,54 @@ pub(super) const T: [u32; 64] = [
     0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1, 0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391,
 ];
 
-/// Computes the 128-bit MD5 digest of `input`.
+/// MD5 (RFC 1321): a 128-bit digest.
 ///
-/// Always uses the scalar backend: a single digest is one long chain of
-/// dependent steps, so there's nothing for SIMD to parallelize. Use
-/// [`digest_many`] to hash several messages at once instead.
+/// A zero-sized namespace for the hashing functions; it holds no state.
 ///
-/// Full 64-byte blocks are read directly out of `input` (no copy); only the
-/// last 1-2 blocks (tail + padding + length) are staged on the stack.
-pub fn digest(input: &[u8]) -> [u8; 16] {
-    digest_with(super::scalar::compress, input)
+/// ```
+/// use cryptors::{Digest, md5::Md5};
+///
+/// assert_eq!(Md5::digest(b"abc")[0], 0x90);
+/// ```
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub struct Md5;
+
+impl Digest for Md5 {
+    const BLOCK_LEN: usize = 64;
+    const OUTPUT_LEN: usize = 16;
+    type Output = [u8; 16];
+
+    /// Computes the 128-bit MD5 digest of `input`.
+    ///
+    /// Always uses the scalar backend: a single digest is one long chain of
+    /// dependent steps, so there's nothing for SIMD to parallelize. Use
+    /// [`digest_many`](Self::digest_many) to hash several messages at once
+    /// instead.
+    ///
+    /// Full 64-byte blocks are read directly out of `input` (no copy); only
+    /// the last 1-2 blocks (tail + padding + length) are staged on the stack.
+    fn digest(input: &[u8]) -> [u8; 16] {
+        digest_with(super::scalar::compress, input)
+    }
+
+    /// Computes the MD5 digest of every message in `inputs`, in order.
+    ///
+    /// On a CPU with SIMD this is much faster than calling
+    /// [`digest`](Self::digest) in a loop: messages are hashed in groups of up
+    /// to 16 (NEON) or 8 (AVX2), one per vector lane, so a whole group costs
+    /// little more than a single digest. Messages in a group don't need to be
+    /// the same length -- lanes that run out of blocks early just finish up on
+    /// the scalar backend.
+    ///
+    /// The widest backend runs first, then narrower ones handle what's left,
+    /// so a batch size that isn't a multiple of the widest lane count still
+    /// gets most of the benefit. Only a final remainder smaller than the
+    /// narrowest backend -- or every message, on a CPU with no SIMD backend --
+    /// falls back to [`digest`](Self::digest) one at a time.
+    fn digest_many(inputs: &[&[u8]]) -> Vec<[u8; 16]> {
+        digest_batch(inputs)
+    }
 }
 
 /// Pads and finalizes the hash. Takes the compression function as a
@@ -74,20 +114,8 @@ fn encode(state: &[u32; 4]) -> [u8; 16] {
     out
 }
 
-/// Computes the MD5 digest of every message in `inputs`, in order.
-///
-/// On a CPU with SIMD this is much faster than calling [`digest`] in a loop:
-/// messages are hashed in groups of up to 16 (NEON) or 8 (AVX2), one per
-/// vector lane, so a whole group costs little more than a single digest.
-/// Messages in a group don't need to be the same length -- lanes that run
-/// out of blocks early just finish up on the scalar backend.
-///
-/// The widest backend runs first, then narrower ones handle what's left, so
-/// a batch size that isn't a multiple of the widest lane count still gets
-/// most of the benefit. Only a final remainder smaller than the narrowest
-/// backend -- or every message, on a CPU with no SIMD backend -- falls back
-/// to [`digest`] one at a time.
-pub fn digest_many(inputs: &[&[u8]]) -> Vec<[u8; 16]> {
+/// The body of [`Md5::digest_many`]: hashes the messages in SIMD groups.
+fn digest_batch(inputs: &[&[u8]]) -> Vec<[u8; 16]> {
     let mut out = Vec::with_capacity(inputs.len());
     #[cfg_attr(
         not(any(target_arch = "aarch64", target_arch = "x86_64")),
@@ -137,7 +165,7 @@ pub fn digest_many(inputs: &[&[u8]]) -> Vec<[u8; 16]> {
         );
     }
 
-    out.extend(rest.iter().map(|input| digest(input)));
+    out.extend(rest.iter().map(|input| Md5::digest(input)));
     out
 }
 
@@ -241,24 +269,10 @@ fn block_at<'a>(input: &'a [u8], tail: &'a [u8; 128], aligned: usize, b: usize) 
     &buf[i..i + 64]
 }
 
-const HEX: &[u8; 16] = b"0123456789abcdef";
-
-/// Computes the MD5 digest of `input` and returns it as a lowercase hex
-/// string.
-pub fn hex_digest(input: &[u8]) -> String {
-    let bytes = digest(input);
-    let mut out = Vec::with_capacity(32);
-    for b in bytes {
-        out.push(HEX[(b >> 4) as usize]);
-        out.push(HEX[(b & 0xf) as usize]);
-    }
-    // SAFETY: `out` only ever contains bytes from the `HEX` table, which is ASCII.
-    unsafe { String::from_utf8_unchecked(out) }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{digest, digest_many, hex_digest};
+    use super::Md5;
+    use crate::Digest;
     use crate::md5::scalar;
 
     /// Which backend `digest_many` will actually select here, and its width.
@@ -304,14 +318,14 @@ mod tests {
         ];
 
         for (input, expected) in cases {
-            assert_eq!(hex_digest(input), expected, "input = {input:?}");
+            assert_eq!(Md5::hex_digest(input), expected, "input = {input:?}");
         }
     }
 
     #[test]
     fn quick_brown_fox() {
         assert_eq!(
-            hex_digest(b"The quick brown fox jumps over the lazy dog"),
+            Md5::hex_digest(b"The quick brown fox jumps over the lazy dog"),
             "9e107d9d372bb6826bd81d3542a419d6"
         );
     }
@@ -319,7 +333,7 @@ mod tests {
     #[test]
     fn crosses_multiple_blocks() {
         let input = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        assert_eq!(hex_digest(input), "76658de2ac7d406f93dfbe8bb6d9f549");
+        assert_eq!(Md5::hex_digest(input), "76658de2ac7d406f93dfbe8bb6d9f549");
     }
 
     #[test]
@@ -327,7 +341,7 @@ mod tests {
         // Long enough to hit a backend's steady-state block loop, not just
         // its padding path.
         let input = vec![b'a'; 1_000_000];
-        assert_eq!(hex_digest(&input), "7707d6ae4e027c70eea2a935c2296f21");
+        assert_eq!(Md5::hex_digest(&input), "7707d6ae4e027c70eea2a935c2296f21");
     }
 
     #[test]
@@ -337,7 +351,7 @@ mod tests {
         // changes how many blocks the tail occupies.
         for len in [0usize, 1, 55, 56, 57, 63, 64, 65, 119, 120, 121, 128, 200] {
             let input = pattern(len);
-            assert_eq!(digest(&input), reference_digest(&input), "len = {len}");
+            assert_eq!(Md5::digest(&input), reference_digest(&input), "len = {len}");
         }
     }
 
@@ -447,7 +461,7 @@ mod tests {
             let group: Vec<&[u8]> = vec![&input; W];
             assert_eq!(
                 only::<W, _>(&mut compress, &group),
-                vec![digest(&input); W],
+                vec![Md5::digest(&input); W],
                 "{name}/{W}: uniform group disagrees with scalar at len = {len}"
             );
         }
@@ -460,7 +474,7 @@ mod tests {
             let group: Vec<&[u8]> = (0..W)
                 .map(|lane| inputs[(offset + lane * 7) % inputs.len()].as_slice())
                 .collect();
-            let expected: Vec<[u8; 16]> = group.iter().map(|input| digest(input)).collect();
+            let expected: Vec<[u8; 16]> = group.iter().map(|input| Md5::digest(input)).collect();
             assert_eq!(
                 only::<W, _>(&mut compress, &group),
                 expected,
@@ -473,7 +487,7 @@ mod tests {
         let group: Vec<&[u8]> = (0..3 * W)
             .map(|i| inputs[i % inputs.len()].as_slice())
             .collect();
-        let expected: Vec<[u8; 16]> = group.iter().map(|input| digest(input)).collect();
+        let expected: Vec<[u8; 16]> = group.iter().map(|input| Md5::digest(input)).collect();
         assert_eq!(
             only::<W, _>(&mut compress, &group),
             expected,
@@ -485,7 +499,7 @@ mod tests {
     /// the same digests as hashing each message on its own.
     #[test]
     fn digest_many_matches_digest() {
-        assert!(digest_many(&[]).is_empty());
+        assert!(Md5::digest_many(&[]).is_empty());
 
         let inputs: Vec<Vec<u8>> = LENGTHS.iter().map(|&len| pattern(len)).collect();
 
@@ -493,19 +507,19 @@ mod tests {
         // different mix of lengths each time.
         for count in 0..=inputs.len() {
             let group: Vec<&[u8]> = inputs[..count].iter().map(Vec::as_slice).collect();
-            let expected: Vec<[u8; 16]> = group.iter().map(|input| digest(input)).collect();
-            assert_eq!(digest_many(&group), expected, "count = {count}");
+            let expected: Vec<[u8; 16]> = group.iter().map(|input| Md5::digest(input)).collect();
+            assert_eq!(Md5::digest_many(&group), expected, "count = {count}");
         }
 
         // Many identical messages: the common case, where every lane stays
         // in the lane-parallel phase right up to the last block.
         let input = pattern(10_000);
         let group: Vec<&[u8]> = vec![&input; 33];
-        assert_eq!(digest_many(&group), vec![digest(&input); 33]);
+        assert_eq!(Md5::digest_many(&group), vec![Md5::digest(&input); 33]);
     }
 
     #[test]
-    #[ignore = "manual throughput check: cargo test --release -- --ignored --nocapture"]
+    #[ignore = "manual throughput check: cargo test --release md5 -- --ignored --nocapture --test-threads=1"]
     fn throughput() {
         use std::time::Instant;
 
@@ -519,12 +533,12 @@ mod tests {
         // A cold pass over a fresh 64 MiB buffer mostly measures page faults
         // and clock ramp-up, not MD5. So warm up first and keep the best of
         // several runs.
-        std::hint::black_box(digest(&data));
+        std::hint::black_box(Md5::digest(&data));
         let mut single = 0.0f64;
         let mut d = [0u8; 16];
         for _ in 0..5 {
             let start = Instant::now();
-            d = digest(&data);
+            d = Md5::digest(&data);
             single = single.max(mib / start.elapsed().as_secs_f64());
         }
         println!("md5 single [scalar]: {mib:.0} MiB, best {single:.1} MiB/s (digest {d:02x?})");
@@ -534,12 +548,12 @@ mod tests {
         // negligible, and small enough to stay cache-warm.
         const MSG: usize = 64 * 1024;
         let messages: Vec<&[u8]> = data.chunks_exact(MSG).collect();
-        std::hint::black_box(digest_many(&messages));
+        std::hint::black_box(Md5::digest_many(&messages));
         let mut batch = 0.0f64;
         let mut n = 0;
         for _ in 0..5 {
             let start = Instant::now();
-            let out = digest_many(&messages);
+            let out = Md5::digest_many(&messages);
             batch = batch.max(mib / start.elapsed().as_secs_f64());
             n = out.len();
         }

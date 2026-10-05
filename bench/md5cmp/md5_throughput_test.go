@@ -6,7 +6,7 @@
 // is all its API offers -- there is no multi-buffer MD5 in the Go standard
 // library. The second figure exists so that the batch comparison is apples to
 // apples on input shape: it is the same 1024 messages the Rust batch test
-// hashes, and the difference against cryptors' `digest_many` is precisely what
+// hashes, and the difference against cryptors' `Md5::digest_many` is precisely what
 // filling SIMD lanes with independent messages buys.
 package md5cmp
 

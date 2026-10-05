@@ -79,7 +79,7 @@ macro_rules! step4 {
 /// # Safety
 ///
 /// The caller must make sure `sse2` is available on this CPU.
-/// `super::digest::digest_many` is the only caller and checks this (though
+/// `super::digest::digest_batch` is the only caller and checks this (though
 /// `sse2` is always available on x86-64 anyway). No other invariants matter:
 /// both arguments are fixed-size arrays, so every vector load and store
 /// below is in bounds by construction.
@@ -150,7 +150,7 @@ macro_rules! step8 {
 /// # Safety
 ///
 /// The caller must make sure `avx2` is available on this CPU.
-/// `super::digest::digest_many` is the only caller and checks this. No other
+/// `super::digest::digest_batch` is the only caller and checks this. No other
 /// invariants matter: both arguments are fixed-size arrays, so every vector
 /// load and store below is in bounds by construction.
 #[target_feature(enable = "avx2")]

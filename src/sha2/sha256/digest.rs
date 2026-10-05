@@ -1,3 +1,5 @@
+use crate::Digest;
+
 /// Initial hash state for SHA-224: the second 32 bits of the fractional parts
 /// of the square roots of the 9th through 16th primes (FIPS 180-4 section 5.3.2).
 const INIT_224: [u32; 8] = [
@@ -94,20 +96,58 @@ fn compress(state: &mut [u32; 8], blocks: &[u8]) {
     super::scalar::compress(state, blocks);
 }
 
-/// Computes the 224-bit SHA-224 digest of `input`.
+/// SHA-224 (FIPS 180-4): a 224-bit digest, from its own initial state.
 ///
-/// Full blocks are hashed straight out of `input` without copying; only the
-/// last partial block (plus padding) is copied onto the stack.
-pub fn sha224(input: &[u8]) -> [u8; 28] {
-    to_bytes(&hash_with(compress, INIT_224, input))
+/// A zero-sized namespace for the hashing functions; it holds no state.
+///
+/// ```
+/// use cryptors::{Digest, sha2::Sha224};
+///
+/// assert_eq!(Sha224::digest(b"abc")[0], 0x23);
+/// ```
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub struct Sha224;
+
+impl Digest for Sha224 {
+    const BLOCK_LEN: usize = 64;
+    const OUTPUT_LEN: usize = 28;
+    type Output = [u8; 28];
+
+    /// Computes the 224-bit SHA-224 digest of `input`.
+    ///
+    /// Full blocks are hashed straight out of `input` without copying; only
+    /// the last partial block (plus padding) is copied onto the stack.
+    fn digest(input: &[u8]) -> [u8; 28] {
+        to_bytes(&hash_with(compress, INIT_224, input))
+    }
 }
 
-/// Computes the 256-bit SHA-256 digest of `input`.
+/// SHA-256 (FIPS 180-4): a 256-bit digest.
 ///
-/// Full blocks are hashed straight out of `input` without copying; only the
-/// last partial block (plus padding) is copied onto the stack.
-pub fn sha256(input: &[u8]) -> [u8; 32] {
-    to_bytes(&hash_with(compress, INIT_256, input))
+/// A zero-sized namespace for the hashing functions; it holds no state.
+///
+/// ```
+/// use cryptors::{Digest, sha2::Sha256};
+///
+/// assert_eq!(Sha256::digest(b"abc")[0], 0xba);
+/// ```
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub struct Sha256;
+
+impl Digest for Sha256 {
+    const BLOCK_LEN: usize = 64;
+    const OUTPUT_LEN: usize = 32;
+    type Output = [u8; 32];
+
+    /// Computes the 256-bit SHA-256 digest of `input`.
+    ///
+    /// Full blocks are hashed straight out of `input` without copying; only
+    /// the last partial block (plus padding) is copied onto the stack.
+    fn digest(input: &[u8]) -> [u8; 32] {
+        to_bytes(&hash_with(compress, INIT_256, input))
+    }
 }
 
 /// Pads `input`, runs every block through `compress_fn` starting from the
@@ -155,32 +195,11 @@ fn to_bytes<const N: usize>(state: &[u32; 8]) -> [u8; N] {
     out
 }
 
-const HEX: &[u8; 16] = b"0123456789abcdef";
-
-/// Renders `bytes` as lowercase hex.
-fn hex(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for &b in bytes {
-        out.push(char::from(HEX[(b >> 4) as usize]));
-        out.push(char::from(HEX[(b & 0xf) as usize]));
-    }
-    out
-}
-
-/// Computes the SHA-224 digest of `input` and renders it as lowercase hex.
-pub fn sha224_hex(input: &[u8]) -> String {
-    hex(&sha224(input))
-}
-
-/// Computes the SHA-256 digest of `input` and renders it as lowercase hex.
-pub fn sha256_hex(input: &[u8]) -> String {
-    hex(&sha256(input))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sha256::scalar;
+    use crate::digest::hex;
+    use crate::sha2::scalar;
 
     /// A backend's compression function, callable like `scalar::compress`.
     type Backend = fn(&mut [u32; 8], &[u8]);
@@ -200,7 +219,7 @@ mod tests {
         if has_hw_sha256() {
             // SAFETY: has_hw_sha256() just confirmed the `sha2` feature is available.
             list.push(("aarch64 (FEAT_SHA256)", |s, b| unsafe {
-                crate::sha256::aarch64::compress(s, b)
+                crate::sha2::aarch64::compress(s, b)
             }));
         }
 
@@ -208,7 +227,7 @@ mod tests {
         if has_hw_sha256() {
             // SAFETY: has_hw_sha256() just confirmed `sha`, `ssse3` and `sse4.1` are available.
             list.push(("x86_64 (SHA-NI)", |s, b| unsafe {
-                crate::sha256::x86::compress(s, b)
+                crate::sha2::x86::compress(s, b)
             }));
         }
 
@@ -216,7 +235,7 @@ mod tests {
         if has_avx2_bmi() {
             // SAFETY: has_avx2_bmi() just confirmed `avx2`, `bmi1` and `bmi2` are available.
             list.push(("x86_64 (AVX2+BMI2)", |s, b| unsafe {
-                crate::sha256::x86_avx2::compress(s, b)
+                crate::sha2::x86_avx2::compress(s, b)
             }));
         }
 
@@ -378,14 +397,14 @@ mod tests {
     #[test]
     fn sha256_known_answers() {
         for (input, _, expected) in VECTORS {
-            assert_eq!(sha256_hex(input), expected, "input = {input:?}");
+            assert_eq!(Sha256::hex_digest(input), expected, "input = {input:?}");
         }
     }
 
     #[test]
     fn sha224_known_answers() {
         for (input, expected, _) in VECTORS {
-            assert_eq!(sha224_hex(input), expected, "input = {input:?}");
+            assert_eq!(Sha224::hex_digest(input), expected, "input = {input:?}");
         }
     }
 
@@ -395,28 +414,36 @@ mod tests {
         // the only known-answer input big enough (15,625 blocks) to make a
         // backend's main loop run for long.
         let input = vec![b'a'; 1_000_000];
-        assert_eq!(sha256_hex(&input), MILLION_A_256);
-        assert_eq!(sha224_hex(&input), MILLION_A_224);
+        assert_eq!(Sha256::hex_digest(&input), MILLION_A_256);
+        assert_eq!(Sha224::hex_digest(&input), MILLION_A_224);
     }
 
     #[test]
     fn padding_boundaries() {
         for (len, sha224_expected, sha256_expected) in PATTERN_DIGESTS {
             let input = pattern(len);
-            assert_eq!(sha224_hex(&input), sha224_expected, "SHA-224, len = {len}");
-            assert_eq!(sha256_hex(&input), sha256_expected, "SHA-256, len = {len}");
+            assert_eq!(
+                Sha224::hex_digest(&input),
+                sha224_expected,
+                "SHA-224, len = {len}"
+            );
+            assert_eq!(
+                Sha256::hex_digest(&input),
+                sha256_expected,
+                "SHA-256, len = {len}"
+            );
         }
     }
 
     #[test]
     fn output_shape() {
         let input = b"abc";
-        assert_eq!(sha224(input).len(), 28);
-        assert_eq!(sha256(input).len(), 32);
-        assert_eq!(sha224_hex(input).len(), 56);
-        assert_eq!(sha256_hex(input).len(), 64);
+        assert_eq!(Sha224::digest(input).len(), 28);
+        assert_eq!(Sha256::digest(input).len(), 32);
+        assert_eq!(Sha224::hex_digest(input).len(), 56);
+        assert_eq!(Sha256::hex_digest(input).len(), 64);
         assert!(
-            sha256_hex(input)
+            Sha256::hex_digest(input)
                 .bytes()
                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
             "hex output must be lowercase"
@@ -428,7 +455,7 @@ mod tests {
         // SHA-224 has its own initial state, so its digest is not simply the
         // first 28 bytes of the SHA-256 digest.
         let input = b"abc";
-        assert_ne!(sha224(input)[..], sha256(input)[..28]);
+        assert_ne!(Sha224::digest(input)[..], Sha256::digest(input)[..28]);
     }
 
     /// Checks that every other backend this CPU can run produces exactly the
@@ -476,12 +503,12 @@ mod tests {
         for offset in 0..64 {
             let input = &backing[offset..offset + len];
             assert_eq!(
-                sha256(input),
+                Sha256::digest(input),
                 to_bytes::<32>(&hash_with(scalar::compress, INIT_256, input)),
                 "SHA-256, offset = {offset}"
             );
             assert_eq!(
-                sha224(input),
+                Sha224::digest(input),
                 to_bytes::<28>(&hash_with(scalar::compress, INIT_224, input)),
                 "SHA-224, offset = {offset}"
             );
@@ -583,12 +610,12 @@ mod tests {
         for len in [0usize, 63, 64, 65, 1024, 100_000] {
             let input = pattern(len);
             assert_eq!(
-                sha256(&input),
+                Sha256::digest(&input),
                 to_bytes::<32>(&hash_with(scalar::compress, INIT_256, &input)),
                 "SHA-256, len = {len}"
             );
             assert_eq!(
-                sha224(&input),
+                Sha224::digest(&input),
                 to_bytes::<28>(&hash_with(scalar::compress, INIT_224, &input)),
                 "SHA-224, len = {len}"
             );
@@ -606,7 +633,7 @@ mod tests {
         // The first pass over a fresh buffer is slowed down by page faults and
         // CPU clock ramp-up, not just SHA-256 itself. So we warm up once, then
         // time several runs and keep the best.
-        std::hint::black_box(sha256(&data));
+        std::hint::black_box(Sha256::digest(&data));
 
         /// Runs `hash` over `data` five times and prints the best rate.
         fn time(name: &str, backend: &str, data: &[u8], mib: f64, hash: impl Fn(&[u8]) -> Vec<u8>) {
@@ -619,16 +646,16 @@ mod tests {
             }
             println!(
                 "{name} [{backend}]: {mib:.0} MiB, best {best:.1} MiB/s (digest {}...)",
-                super::hex(&digest[..8])
+                hex(&digest[..8])
             );
         }
 
         // Exactly the public API's path: the dispatcher picks the backend.
         time("sha224", active_backend(), &data, mib, |d| {
-            sha224(d).to_vec()
+            Sha224::digest(d).to_vec()
         });
         time("sha256", active_backend(), &data, mib, |d| {
-            sha256(d).to_vec()
+            Sha256::digest(d).to_vec()
         });
 
         // Then every backend the dispatcher passed over, down to scalar, so

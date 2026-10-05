@@ -1,4 +1,5 @@
-//! From-scratch SHA-224 and SHA-256 implementation (FIPS 180-4).
+//! From-scratch SHA-224 and SHA-256 implementation (FIPS 180-4), the two
+//! 32-bit members of the SHA-2 family.
 //!
 //! Both are the same algorithm. The message is padded to a multiple of 64
 //! bytes, then every 64-byte block is mixed into a running state of eight
@@ -39,16 +40,16 @@
 //! # Example
 //!
 //! ```
-//! use cryptors::sha256;
+//! use cryptors::{Digest, sha2::{Sha224, Sha256}};
 //!
-//! let digest: [u8; 32] = sha256::sha256(b"abc");
+//! let digest: [u8; 32] = Sha256::digest(b"abc");
 //! assert_eq!(
-//!     sha256::sha256_hex(b"abc"),
+//!     Sha256::hex_digest(b"abc"),
 //!     "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
 //! );
 //! assert_eq!(digest[0], 0xba);
 //!
-//! let short: [u8; 28] = sha256::sha224(b"abc");
+//! let short: [u8; 28] = Sha224::digest(b"abc");
 //! assert_eq!(short[0], 0x23);
 //! ```
 
@@ -63,4 +64,4 @@ mod x86_avx2;
 
 use digest::K;
 
-pub use digest::{sha224, sha224_hex, sha256, sha256_hex};
+pub use digest::{Sha224, Sha256};

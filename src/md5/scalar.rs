@@ -61,7 +61,7 @@ pub(super) fn process_block(state: &mut [u32; 4], block: &[u8; 64]) {
 /// Compresses every full 64-byte block in `blocks` into `state`.
 ///
 /// Leftover bytes that don't form a full block are ignored; the caller is
-/// responsible for padding (see `super::digest::digest`).
+/// responsible for padding (see `Md5::digest`).
 pub(super) fn compress(state: &mut [u32; 4], blocks: &[u8]) {
     for block in blocks.chunks_exact(64) {
         // `chunks_exact(64)` guarantees this conversion succeeds.
