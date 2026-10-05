@@ -1,4 +1,6 @@
 use crate::Digest;
+#[cfg(target_arch = "x86_64")]
+use crate::sha2::has_bmi;
 
 /// Initial hash state for SHA-224: the second 32 bits of the fractional parts
 /// of the square roots of the 9th through 16th primes (FIPS 180-4 section 5.3.2).
@@ -45,16 +47,6 @@ fn has_hw_sha256() -> bool {
 #[inline]
 fn has_avx2_bmi() -> bool {
     std::arch::is_x86_feature_detected!("avx2") && has_bmi()
-}
-
-#[cfg(target_arch = "x86_64")]
-#[inline]
-fn has_bmi() -> bool {
-    // On a target that already has both in its baseline (`-C target-cpu=x86-64-v3`,
-    // for instance) this folds away at compile time.
-    (cfg!(target_feature = "bmi1") && cfg!(target_feature = "bmi2"))
-        || (std::arch::is_x86_feature_detected!("bmi1")
-            && std::arch::is_x86_feature_detected!("bmi2"))
 }
 
 /// Hashes every full 64-byte block in `blocks` into `state`, picking the
@@ -199,7 +191,7 @@ fn to_bytes<const N: usize>(state: &[u32; 8]) -> [u8; N] {
 mod tests {
     use super::*;
     use crate::digest::hex;
-    use crate::sha2::scalar;
+    use crate::sha2::sha256::scalar;
 
     /// A backend's compression function, callable like `scalar::compress`.
     type Backend = fn(&mut [u32; 8], &[u8]);
@@ -219,7 +211,7 @@ mod tests {
         if has_hw_sha256() {
             // SAFETY: has_hw_sha256() just confirmed the `sha2` feature is available.
             list.push(("aarch64 (FEAT_SHA256)", |s, b| unsafe {
-                crate::sha2::aarch64::compress(s, b)
+                crate::sha2::sha256::aarch64::compress(s, b)
             }));
         }
 
@@ -227,7 +219,7 @@ mod tests {
         if has_hw_sha256() {
             // SAFETY: has_hw_sha256() just confirmed `sha`, `ssse3` and `sse4.1` are available.
             list.push(("x86_64 (SHA-NI)", |s, b| unsafe {
-                crate::sha2::x86::compress(s, b)
+                crate::sha2::sha256::x86::compress(s, b)
             }));
         }
 
@@ -235,7 +227,7 @@ mod tests {
         if has_avx2_bmi() {
             // SAFETY: has_avx2_bmi() just confirmed `avx2`, `bmi1` and `bmi2` are available.
             list.push(("x86_64 (AVX2+BMI2)", |s, b| unsafe {
-                crate::sha2::x86_avx2::compress(s, b)
+                crate::sha2::sha256::x86_avx2::compress(s, b)
             }));
         }
 
@@ -256,6 +248,11 @@ mod tests {
         backends()[0].0
     }
 
+    /// The two initial states, with the number of output bytes each function
+    /// keeps, for tests that run both.
+    const FUNCTIONS: [(&str, [u32; 8], usize); 2] =
+        [("sha224", INIT_224, 28), ("sha256", INIT_256, 32)];
+
     /// Message lengths around every point where the padding layout changes
     /// (a partial block of 55 bytes is the last that leaves room for the
     /// marker and length; 56 forces a second block) plus a few larger sizes
@@ -271,140 +268,217 @@ mod tests {
         (0..len).map(|i| (i % 251) as u8).collect()
     }
 
-    /// Known-answer vectors: (message, SHA-224, SHA-256).
+    /// The digest of one message under each of the two functions, as hex.
+    struct Digests {
+        sha224: &'static str,
+        sha256: &'static str,
+    }
+
+    /// Checks `input` against `expected` through the public functions.
+    fn assert_public(input: &[u8], expected: &Digests, what: &str) {
+        assert_eq!(
+            Sha224::hex_digest(input),
+            expected.sha224,
+            "SHA-224, {what}"
+        );
+        assert_eq!(
+            Sha256::hex_digest(input),
+            expected.sha256,
+            "SHA-256, {what}"
+        );
+    }
+
+    /// Checks `input` against `expected` through the scalar backend
+    /// specifically.
+    ///
+    /// The public functions skip `scalar` on a machine with hardware SHA-256.
+    /// Without this, the scalar backend would never actually get checked on
+    /// such a machine.
+    fn assert_scalar(input: &[u8], expected: &Digests, what: &str) {
+        let state = |init| hash_with(scalar::compress, init, input);
+        assert_eq!(
+            hex(&to_bytes::<28>(&state(INIT_224))),
+            expected.sha224,
+            "SHA-224, {what}"
+        );
+        assert_eq!(
+            hex(&to_bytes::<32>(&state(INIT_256))),
+            expected.sha256,
+            "SHA-256, {what}"
+        );
+    }
+
+    /// Known-answer vectors.
     ///
     /// The empty message, "abc" (one block) and the 448-bit message (whose
     /// padding spills into a second block) are the example messages NIST
     /// publishes for FIPS 180-4; the third example, a million repetitions of
-    /// "a", is `MILLION_A_*` below. The last two are common extra checks.
-    const VECTORS: [(&[u8], &str, &str); 5] = [
+    /// "a", is `MILLION_A` below. The last two are common extra checks.
+    const VECTORS: [(&[u8], Digests); 5] = [
         (
             b"",
-            "d14a028c2a3a2bc9476102bb288234c415a2b01f828ea62ac5b3e42f",
-            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            Digests {
+                sha224: "d14a028c2a3a2bc9476102bb288234c415a2b01f828ea62ac5b3e42f",
+                sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            },
         ),
         (
             b"abc",
-            "23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7",
-            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            Digests {
+                sha224: "23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7",
+                sha256: "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            },
         ),
         (
             b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
-            "75388b16512776cc5dba5da1fd890150b0c6455cb4f58b1952522525",
-            "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
+            Digests {
+                sha224: "75388b16512776cc5dba5da1fd890150b0c6455cb4f58b1952522525",
+                sha256: "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
+            },
         ),
         (
             b"abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu",
-            "c97ca9a559850ce97a04a96def6d99a9e0e0e2ab14e6b8df265fc0b3",
-            "cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1",
+            Digests {
+                sha224: "c97ca9a559850ce97a04a96def6d99a9e0e0e2ab14e6b8df265fc0b3",
+                sha256: "cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1",
+            },
         ),
         (
             b"The quick brown fox jumps over the lazy dog",
-            "730e109bd7a8a32b1cb9d9a09aa2325d2430587ddbc0c38bad911525",
-            "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592",
+            Digests {
+                sha224: "730e109bd7a8a32b1cb9d9a09aa2325d2430587ddbc0c38bad911525",
+                sha256: "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592",
+            },
         ),
     ];
 
-    const MILLION_A_224: &str = "20794655980c91d8bbb4c1ea97618a4bf03f42581948b2ee4ee7ad67";
-    const MILLION_A_256: &str = "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0";
+    const MILLION_A: Digests = Digests {
+        sha224: "20794655980c91d8bbb4c1ea97618a4bf03f42581948b2ee4ee7ad67",
+        sha256: "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0",
+    };
 
     /// Digests of `pattern(len)` for lengths at the padding boundaries, as
     /// computed by an independent SHA-2 implementation (OpenSSL): (length,
-    /// SHA-224, SHA-256).
-    const PATTERN_DIGESTS: [(usize, &str, &str); 16] = [
+    /// digests).
+    const PATTERN_DIGESTS: [(usize, Digests); 16] = [
         (
             1,
-            "fff9292b4201617bdc4d3053fce02734166a683d7d858a7f5f59b073",
-            "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            Digests {
+                sha224: "fff9292b4201617bdc4d3053fce02734166a683d7d858a7f5f59b073",
+                sha256: "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
+            },
         ),
         (
             55,
-            "8991dfba74284e04dc7581c7c3e4068ff6cb7a63733361429834bb56",
-            "463eb28e72f82e0a96c0a4cc53690c571281131f672aa229e0d45ae59b598b59",
+            Digests {
+                sha224: "8991dfba74284e04dc7581c7c3e4068ff6cb7a63733361429834bb56",
+                sha256: "463eb28e72f82e0a96c0a4cc53690c571281131f672aa229e0d45ae59b598b59",
+            },
         ),
         (
             56,
-            "2b2cd637c16ad7290bb067ad7d8fd04e204fa43a84366afc7130f4ef",
-            "da2ae4d6b36748f2a318f23e7ab1dfdf45acdc9d049bd80e59de82a60895f562",
+            Digests {
+                sha224: "2b2cd637c16ad7290bb067ad7d8fd04e204fa43a84366afc7130f4ef",
+                sha256: "da2ae4d6b36748f2a318f23e7ab1dfdf45acdc9d049bd80e59de82a60895f562",
+            },
         ),
         (
             57,
-            "e87f5bc938c3b981c197d4b163c635a5049fac81c4c6467e1251be48",
-            "2fe741af801cc238602ac0ec6a7b0c3a8a87c7fc7d7f02a3fe03d1c12eac4d8f",
+            Digests {
+                sha224: "e87f5bc938c3b981c197d4b163c635a5049fac81c4c6467e1251be48",
+                sha256: "2fe741af801cc238602ac0ec6a7b0c3a8a87c7fc7d7f02a3fe03d1c12eac4d8f",
+            },
         ),
         (
             63,
-            "049e8dd7eab3378ce9f823bfb569e5b270235d4b7f9623606971998f",
-            "29af2686fd53374a36b0846694cc342177e428d1647515f078784d69cdb9e488",
+            Digests {
+                sha224: "049e8dd7eab3378ce9f823bfb569e5b270235d4b7f9623606971998f",
+                sha256: "29af2686fd53374a36b0846694cc342177e428d1647515f078784d69cdb9e488",
+            },
         ),
         (
             64,
-            "c37b88a3522dbf7ac30d1c68ea397ac11d4773571aed01ddab73531e",
-            "fdeab9acf3710362bd2658cdc9a29e8f9c757fcf9811603a8c447cd1d9151108",
+            Digests {
+                sha224: "c37b88a3522dbf7ac30d1c68ea397ac11d4773571aed01ddab73531e",
+                sha256: "fdeab9acf3710362bd2658cdc9a29e8f9c757fcf9811603a8c447cd1d9151108",
+            },
         ),
         (
             65,
-            "114b5fd665736a96585c5d5837d35250aed73c725252cbf7f8b121f6",
-            "4bfd2c8b6f1eec7a2afeb48b934ee4b2694182027e6d0fc075074f2fabb31781",
+            Digests {
+                sha224: "114b5fd665736a96585c5d5837d35250aed73c725252cbf7f8b121f6",
+                sha256: "4bfd2c8b6f1eec7a2afeb48b934ee4b2694182027e6d0fc075074f2fabb31781",
+            },
         ),
         (
             119,
-            "762f18c0df65c3d0ea64126c8a6e51db4425e76d4d969ed0f83899be",
-            "da18797ed7c3a777f0847f429724a2d8cd5138e6ed2895c3fa1a6d39d18f7ec6",
+            Digests {
+                sha224: "762f18c0df65c3d0ea64126c8a6e51db4425e76d4d969ed0f83899be",
+                sha256: "da18797ed7c3a777f0847f429724a2d8cd5138e6ed2895c3fa1a6d39d18f7ec6",
+            },
         ),
         (
             120,
-            "d022deb78772a77e8b91d68f90ca1f636e8fe047ae219434ced18eef",
-            "f52b23db1fbb6ded89ef42a23ce0c8922c45f25c50b568a93bf1c075420bbb7c",
+            Digests {
+                sha224: "d022deb78772a77e8b91d68f90ca1f636e8fe047ae219434ced18eef",
+                sha256: "f52b23db1fbb6ded89ef42a23ce0c8922c45f25c50b568a93bf1c075420bbb7c",
+            },
         ),
         (
             121,
-            "a802d8b618a503352cdbcc1fbef04ea36499ea72d0e32d314caf83e5",
-            "335a461692b30bba1d647cc71604e88e676c90e4c22455d0b8c83f4bd7c8ac9b",
+            Digests {
+                sha224: "a802d8b618a503352cdbcc1fbef04ea36499ea72d0e32d314caf83e5",
+                sha256: "335a461692b30bba1d647cc71604e88e676c90e4c22455d0b8c83f4bd7c8ac9b",
+            },
         ),
         (
             127,
-            "554c9c3f7e92b80f4121e00cc147535d377eaeb4fb1fa8e25c7f81c1",
-            "92ca0fa6651ee2f97b884b7246a562fa71250fedefe5ebf270d31c546bfea976",
+            Digests {
+                sha224: "554c9c3f7e92b80f4121e00cc147535d377eaeb4fb1fa8e25c7f81c1",
+                sha256: "92ca0fa6651ee2f97b884b7246a562fa71250fedefe5ebf270d31c546bfea976",
+            },
         ),
         (
             128,
-            "67d88da33fd632d8742424791dface672ff59d597fe38b3f2a998386",
-            "471fb943aa23c511f6f72f8d1652d9c880cfa392ad80503120547703e56a2be5",
+            Digests {
+                sha224: "67d88da33fd632d8742424791dface672ff59d597fe38b3f2a998386",
+                sha256: "471fb943aa23c511f6f72f8d1652d9c880cfa392ad80503120547703e56a2be5",
+            },
         ),
         (
             129,
-            "a80cb91e08a62f062bd17db00d0e1979d041edeb52b497b205266b9c",
-            "5099c6a56203f9687f7d33f4bfdf576d31dc91f6b695ecea38b2770c87631135",
+            Digests {
+                sha224: "a80cb91e08a62f062bd17db00d0e1979d041edeb52b497b205266b9c",
+                sha256: "5099c6a56203f9687f7d33f4bfdf576d31dc91f6b695ecea38b2770c87631135",
+            },
         ),
         (
             191,
-            "738dc8e738d4d1e866e30a7946d2e241ce2fe5d2c9bbe82ee8a6a543",
-            "d280f473c251cb75c91880ea0eca2a2f1cda3152bef54a38c4a3aedad615c819",
+            Digests {
+                sha224: "738dc8e738d4d1e866e30a7946d2e241ce2fe5d2c9bbe82ee8a6a543",
+                sha256: "d280f473c251cb75c91880ea0eca2a2f1cda3152bef54a38c4a3aedad615c819",
+            },
         ),
         (
             192,
-            "f36432272b487ddfa019fa20b82cf8b69c9d6ed07b93ce5f55e99a1c",
-            "8b4a544837a1a0280fa8a7c82865c27a1064b3cc6281fda0753566b9bb104a87",
+            Digests {
+                sha224: "f36432272b487ddfa019fa20b82cf8b69c9d6ed07b93ce5f55e99a1c",
+                sha256: "8b4a544837a1a0280fa8a7c82865c27a1064b3cc6281fda0753566b9bb104a87",
+            },
         ),
         (
             193,
-            "6e010c13db7a0ea4b87845d8d03eb9e3af891f0890451809938b7d57",
-            "7daafa7aed7d63d06a98b7b6f785eab5427d084f30d5c9ee6dd0d2f3ada329e6",
+            Digests {
+                sha224: "6e010c13db7a0ea4b87845d8d03eb9e3af891f0890451809938b7d57",
+                sha256: "7daafa7aed7d63d06a98b7b6f785eab5427d084f30d5c9ee6dd0d2f3ada329e6",
+            },
         ),
     ];
 
     #[test]
-    fn sha256_known_answers() {
-        for (input, _, expected) in VECTORS {
-            assert_eq!(Sha256::hex_digest(input), expected, "input = {input:?}");
-        }
-    }
-
-    #[test]
-    fn sha224_known_answers() {
-        for (input, expected, _) in VECTORS {
-            assert_eq!(Sha224::hex_digest(input), expected, "input = {input:?}");
+    fn known_answers() {
+        for (input, expected) in &VECTORS {
+            assert_public(input, expected, &format!("input = {input:?}"));
         }
     }
 
@@ -413,49 +487,14 @@ mod tests {
         // The third NIST example message: 1,000,000 repetitions of 'a'. It is
         // the only known-answer input big enough (15,625 blocks) to make a
         // backend's main loop run for long.
-        let input = vec![b'a'; 1_000_000];
-        assert_eq!(Sha256::hex_digest(&input), MILLION_A_256);
-        assert_eq!(Sha224::hex_digest(&input), MILLION_A_224);
+        assert_public(&vec![b'a'; 1_000_000], &MILLION_A, "one million 'a'");
     }
 
     #[test]
     fn padding_boundaries() {
-        for (len, sha224_expected, sha256_expected) in PATTERN_DIGESTS {
-            let input = pattern(len);
-            assert_eq!(
-                Sha224::hex_digest(&input),
-                sha224_expected,
-                "SHA-224, len = {len}"
-            );
-            assert_eq!(
-                Sha256::hex_digest(&input),
-                sha256_expected,
-                "SHA-256, len = {len}"
-            );
+        for (len, expected) in &PATTERN_DIGESTS {
+            assert_public(&pattern(*len), expected, &format!("len = {len}"));
         }
-    }
-
-    #[test]
-    fn output_shape() {
-        let input = b"abc";
-        assert_eq!(Sha224::digest(input).len(), 28);
-        assert_eq!(Sha256::digest(input).len(), 32);
-        assert_eq!(Sha224::hex_digest(input).len(), 56);
-        assert_eq!(Sha256::hex_digest(input).len(), 64);
-        assert!(
-            Sha256::hex_digest(input)
-                .bytes()
-                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
-            "hex output must be lowercase"
-        );
-    }
-
-    #[test]
-    fn sha224_is_not_truncated_sha256() {
-        // SHA-224 has its own initial state, so its digest is not simply the
-        // first 28 bytes of the SHA-256 digest.
-        let input = b"abc";
-        assert_ne!(Sha224::digest(input)[..], Sha256::digest(input)[..28]);
     }
 
     /// Checks that every other backend this CPU can run produces exactly the
@@ -473,13 +512,13 @@ mod tests {
             .collect();
 
         for (name, backend) in &others {
-            for init in [INIT_224, INIT_256] {
+            for (function, init, _) in FUNCTIONS {
                 for len in LENGTHS {
                     let input = pattern(len);
                     assert_eq!(
                         hash_with(backend, init, &input),
                         hash_with(scalar::compress, init, &input),
-                        "{name} backend disagrees with scalar at len = {len}"
+                        "{name} backend disagrees with scalar for {function} at len = {len}"
                     );
                 }
             }
@@ -493,137 +532,44 @@ mod tests {
 
     /// Checks that the digest does not depend on where in memory the message
     /// starts. The hardware backends read it with unaligned vector loads, and
-    /// that is only correct if they never assume an alignment.
+    /// that is only correct if they never assume an alignment. Every backend
+    /// is checked, not just the one the public functions pick.
     #[test]
     fn unaligned_input() {
         // Five full blocks and a partial one, starting at every offset in
         // the first 64 bytes of the buffer.
         let len = 64 * 5 + 7;
         let backing = pattern(64 + len);
-        for offset in 0..64 {
-            let input = &backing[offset..offset + len];
-            assert_eq!(
-                Sha256::digest(input),
-                to_bytes::<32>(&hash_with(scalar::compress, INIT_256, input)),
-                "SHA-256, offset = {offset}"
-            );
-            assert_eq!(
-                Sha224::digest(input),
-                to_bytes::<28>(&hash_with(scalar::compress, INIT_224, input)),
-                "SHA-224, offset = {offset}"
-            );
+        for (name, backend) in backends() {
+            for (function, init, _) in FUNCTIONS {
+                for offset in 0..64 {
+                    let input = &backing[offset..offset + len];
+                    // The same bytes in a fresh allocation, as the reference.
+                    let aligned = input.to_vec();
+                    assert_eq!(
+                        hash_with(backend, init, input),
+                        hash_with(scalar::compress, init, &aligned),
+                        "{name} backend, {function}, offset = {offset}"
+                    );
+                }
+            }
         }
     }
 
-    /// Checks the known-answer vectors against the scalar backend specifically.
-    ///
-    /// Every other test above goes through the public functions, which skip
-    /// `scalar` on a machine with hardware SHA-256. Without this test, the
-    /// scalar backend would never actually get checked on such a machine.
+    /// Checks the known-answer vectors against the scalar backend.
     #[test]
     fn scalar_known_answers() {
-        for (input, sha224_expected, sha256_expected) in VECTORS {
-            let sha224 = hex(&to_bytes::<28>(&hash_with(
-                scalar::compress,
-                INIT_224,
-                input,
-            )));
-            let sha256 = hex(&to_bytes::<32>(&hash_with(
-                scalar::compress,
-                INIT_256,
-                input,
-            )));
-            assert_eq!(sha224, sha224_expected, "SHA-224, input = {input:?}");
-            assert_eq!(sha256, sha256_expected, "SHA-256, input = {input:?}");
+        for (input, expected) in &VECTORS {
+            assert_scalar(input, expected, &format!("input = {input:?}"));
         }
-
-        let million = vec![b'a'; 1_000_000];
-        let sha224 = hex(&to_bytes::<28>(&hash_with(
-            scalar::compress,
-            INIT_224,
-            &million,
-        )));
-        let sha256 = hex(&to_bytes::<32>(&hash_with(
-            scalar::compress,
-            INIT_256,
-            &million,
-        )));
-        assert_eq!(sha224, MILLION_A_224);
-        assert_eq!(sha256, MILLION_A_256);
-
-        for (len, sha224_expected, sha256_expected) in PATTERN_DIGESTS {
-            let input = pattern(len);
-            let sha224 = hex(&to_bytes::<28>(&hash_with(
-                scalar::compress,
-                INIT_224,
-                &input,
-            )));
-            let sha256 = hex(&to_bytes::<32>(&hash_with(
-                scalar::compress,
-                INIT_256,
-                &input,
-            )));
-            assert_eq!(sha224, sha224_expected, "SHA-224, len = {len}");
-            assert_eq!(sha256, sha256_expected, "SHA-256, len = {len}");
-        }
-    }
-
-    /// Checks the scalar backend against a second, independently-written
-    /// padding implementation, so a padding bug can't hide just because both
-    /// paths share the same (buggy) helper.
-    #[test]
-    fn scalar_matches_independent_reference() {
-        for len in [
-            0usize, 1, 55, 56, 57, 63, 64, 65, 119, 120, 121, 128, 200, 1024,
-        ] {
-            let input = pattern(len);
-            assert_eq!(
-                hash_with(scalar::compress, INIT_256, &input),
-                reference_hash(INIT_256, &input),
-                "len = {len}"
-            );
-        }
-    }
-
-    /// Reference implementation for `scalar_matches_independent_reference`.
-    /// Builds the whole padded message as one `Vec` -- the simple, unoptimized
-    /// way -- instead of only staging the tail on the stack.
-    fn reference_hash(init: [u32; 8], input: &[u8]) -> [u32; 8] {
-        let mut state = init;
-
-        let mut padded = input.to_vec();
-        padded.push(0x80);
-        while padded.len() % 64 != 56 {
-            padded.push(0);
-        }
-        let bit_len = (input.len() as u64).wrapping_mul(8);
-        padded.extend_from_slice(&bit_len.to_be_bytes());
-
-        scalar::compress(&mut state, &padded);
-        state
-    }
-
-    /// Checks that the public functions, through whichever backend they pick,
-    /// still match the scalar reference.
-    #[test]
-    fn public_api_matches_scalar() {
-        for len in [0usize, 63, 64, 65, 1024, 100_000] {
-            let input = pattern(len);
-            assert_eq!(
-                Sha256::digest(&input),
-                to_bytes::<32>(&hash_with(scalar::compress, INIT_256, &input)),
-                "SHA-256, len = {len}"
-            );
-            assert_eq!(
-                Sha224::digest(&input),
-                to_bytes::<28>(&hash_with(scalar::compress, INIT_224, &input)),
-                "SHA-224, len = {len}"
-            );
+        assert_scalar(&vec![b'a'; 1_000_000], &MILLION_A, "one million 'a'");
+        for (len, expected) in &PATTERN_DIGESTS {
+            assert_scalar(&pattern(*len), expected, &format!("len = {len}"));
         }
     }
 
     #[test]
-    #[ignore = "manual throughput check: cargo test --release -- --ignored --nocapture --test-threads=1"]
+    #[ignore = "manual throughput check: cargo test --release sha2::sha256 -- --ignored --nocapture --test-threads=1"]
     fn throughput() {
         use std::time::Instant;
 
@@ -661,13 +607,12 @@ mod tests {
         // Then every backend the dispatcher passed over, down to scalar, so
         // that one run on a machine with the fastest instructions also
         // measures the paths other CPUs would take.
-        for (name, backend) in backends().into_iter().skip(1) {
-            time("sha224", name, &data, mib, |d| {
-                to_bytes::<28>(&hash_with(backend, INIT_224, d)).to_vec()
-            });
-            time("sha256", name, &data, mib, |d| {
-                to_bytes::<32>(&hash_with(backend, INIT_256, d)).to_vec()
-            });
+        for (backend_name, backend) in backends().into_iter().skip(1) {
+            for (name, init, len) in FUNCTIONS {
+                time(name, backend_name, &data, mib, |d| {
+                    to_bytes::<32>(&hash_with(backend, init, d))[..len].to_vec()
+                });
+            }
         }
     }
 }

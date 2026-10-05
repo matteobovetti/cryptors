@@ -1,5 +1,5 @@
 // Throughput comparison counterpart to the Rust `throughput` test in
-// src/sha256/digest.rs: same buffer size, warm-up, and best-of-5 methodology,
+// src/sha2/sha256/digest.rs: same buffer size, warm-up, and best-of-5 methodology,
 // so the reported MiB/s numbers are directly comparable.
 //
 // SHA-224 and SHA-256 run the same 64-round compression function and differ

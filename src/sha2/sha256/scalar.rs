@@ -23,7 +23,7 @@
 //! writes it.
 //!
 //! On x86-64 the same code is also compiled a second time, for CPUs with BMI1
-//! and BMI2 (see [`compress_bmi`]).
+//! and BMI2 (see `compress_bmi`).
 
 use super::K;
 
@@ -208,7 +208,7 @@ fn round_constants() -> &'static [u32; 64] {
 }
 
 /// Hashes every full 64-byte block in `blocks` into `state`. Shared by
-/// [`compress`] and, on x86-64, [`compress_bmi`], which differ only in the
+/// [`compress`] and, on x86-64, `compress_bmi`, which differ only in the
 /// instructions they are compiled to.
 #[inline(always)]
 fn compress_blocks(state: &mut [u32; 8], blocks: &[u8]) {
