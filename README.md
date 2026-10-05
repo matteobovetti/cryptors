@@ -13,32 +13,37 @@ Other implementations, require to add multiple crates to your project if you are
 
 ## Algorithm
 
-This library supports the following algorithms:
+This library supports the following algorithms and packages:
 
 | Algorithm | Description | Status |
 |-----------|-------------|--------|
-| AES | FIPS 197: Advanced Encryption Standard | :white_large_square: |
-| DES | FIPS 46-3 / TDEA: Data Encryption Standard and Triple DES | :white_large_square: |
-| DSA | FIPS 186-3: Digital Signature Algorithm | :white_large_square: |
-| ECDH | Elliptic Curve Diffie-Hellman over NIST curves and Curve25519 | :white_large_square: |
-| ECDSA | FIPS 186-5: Elliptic Curve Digital Signature Algorithm | :white_large_square: |
-| Ed25519 | Ed25519 signature algorithm | :white_large_square: |
-| Elliptic Curves | NIST P-224, P-256, P-384, and P-521 elliptic curves | :white_large_square: |
-| HKDF | RFC 5869: HMAC-based Extract-and-Expand Key Derivation Function | :white_large_square: |
-| HMAC | FIPS 198: Keyed-Hash Message Authentication Code | :white_large_square: |
-| HPKE | RFC 9180: Hybrid Public Key Encryption | :white_large_square: |
-| MD5 | [RFC 1321](https://www.rfc-editor.org/info/rfc1321): The MD5 Message-Digest Algorithm | :white_check_mark: |
-| ML-DSA | FIPS 204: post-quantum ML-DSA signature scheme | :white_large_square: |
-| ML-KEM | FIPS 203: quantum-resistant key encapsulation method | :white_large_square: |
-| PBKDF2 | RFC 8018: Password-Based Key Derivation Function 2 | :white_large_square: |
-| RC4 | Rivest Cipher 4 stream cipher | :white_large_square: |
-| RSA | PKCS #1 / RFC 8017: RSA encryption | :white_large_square: |
-| SHA-1 | [RFC 3174](https://www.rfc-editor.org/info/rfc3174): US Secure Hash Algorithm 1 | :white_check_mark: |
-| SHA-256 | [FIPS 180-4](https://csrc.nist.gov/pubs/fips/180-4/upd1/final): SHA-224 and SHA-256 | :white_check_mark: |
-| SHA-3 | FIPS 202: SHA-3 and SHAKE extendable output functions | :white_check_mark: |
-| SHA-512 | FIPS 180-4: SHA-384, SHA-512, SHA-512/224, and SHA-512/256 | :white_large_square: |
+| AES | FIPS 197: Advanced Encryption Standard | In progress |
+| Cipher modes | Standard block cipher modes (CBC, CFB, CTR, OFB, GCM) that wrap a block cipher such as AES | Planned |
+| DES | FIPS 46-3 / TDEA: Data Encryption Standard and Triple DES | Planned |
+| DSA | FIPS 186-3: Digital Signature Algorithm | Planned |
+| ECDH | Elliptic Curve Diffie-Hellman over NIST curves and Curve25519 | Planned |
+| ECDSA | FIPS 186-5: Elliptic Curve Digital Signature Algorithm | Planned |
+| Ed25519 | Ed25519 signature algorithm | Planned |
+| Elliptic Curves | NIST P-224, P-256, P-384, and P-521 elliptic curves | Planned |
+| HKDF | RFC 5869: HMAC-based Extract-and-Expand Key Derivation Function | Planned |
+| HMAC | FIPS 198: Keyed-Hash Message Authentication Code | Planned |
+| HPKE | RFC 9180: Hybrid Public Key Encryption | Planned |
+| MD5 | [RFC 1321](https://www.rfc-editor.org/info/rfc1321): The MD5 Message-Digest Algorithm | Implemented |
+| ML-DSA | FIPS 204: post-quantum ML-DSA signature scheme | Planned |
+| ML-KEM | FIPS 203: quantum-resistant key encapsulation method | Planned |
+| PBKDF2 | RFC 8018: Password-Based Key Derivation Function 2 | Planned |
+| Rand | Cryptographically secure random number generator | Planned |
+| RC4 | Rivest Cipher 4 stream cipher | Planned |
+| RSA | PKCS #1 / RFC 8017: RSA encryption | Planned |
+| SHA-1 | [RFC 3174](https://www.rfc-editor.org/info/rfc3174): US Secure Hash Algorithm 1 | Implemented |
+| SHA-256 | [FIPS 180-4](https://csrc.nist.gov/pubs/fips/180-4/upd1/final): SHA-224 and SHA-256 | Implemented |
+| SHA-3 | FIPS 202: SHA-3 and SHAKE extendable output functions | Implemented |
+| SHA-512 | [FIPS 180-4](https://csrc.nist.gov/pubs/fips/180-4/upd1/final): SHA-384, SHA-512, SHA-512/224, and SHA-512/256 | Implemented |
+| Subtle | Constant-time helpers that are useful in cryptographic code but need care to use correctly | Planned |
+| TLS | RFC 5246 / RFC 8446: TLS 1.2 and TLS 1.3 | Planned |
+| X.509 | A subset of the X.509 standard, with the shared ASN.1 structures for certificates, CRLs and OCSP (`pkix`) | Planned |
 
-:white_check_mark: implemented — :construction: in progress — :white_large_square: not implemented
+Status is one of Implemented, In progress or Planned.
 
 ## Hardware acceleration
 
@@ -55,6 +60,7 @@ MD5, the crate takes the parallelism that is actually there instead.
 | SHA-1 | x86_64 | SHA extensions (SHA-NI) | `SHA1RNDS4`, `SHA1NEXTE`, `SHA1MSG1`, `SHA1MSG2` |
 | SHA-224, SHA-256 | aarch64 | ARMv8 Cryptographic Extensions (`sha2` / `FEAT_SHA256`) | `SHA256H`, `SHA256H2`, `SHA256SU0`, `SHA256SU1` |
 | SHA-224, SHA-256 | x86_64 | SHA extensions (SHA-NI) | `SHA256RNDS2`, `SHA256MSG1`, `SHA256MSG2` |
+| SHA-384, SHA-512, SHA-512/224, SHA-512/256 | aarch64 | ARMv8.2 SHA-512 extension (`sha3` / `FEAT_SHA512`) | `SHA512H`, `SHA512H2`, `SHA512SU0`, `SHA512SU1` |
 | SHA-3 | aarch64 | ARMv8.2 SHA-3 extension (`sha3` / `FEAT_SHA3`) | `EOR3`, `RAX1`, `XAR`, `BCAX` |
 
 SHA-3 has no x86 row, and that is not an omission: **SHA-NI covers SHA-1 and SHA-256 only.** No shipping x86
@@ -62,6 +68,18 @@ CPU implements Keccak, so on x86 a single SHA-3 digest runs on the scalar backen
 BMI2, that is a second build of the same code using their general-purpose `andn` and `rorx`, which cut a
 round from 241 instructions to 181. The real parallelism has to come from somewhere else — see the next
 section.
+
+The 64-bit SHA-2 functions have no x86 row either, for a different reason. SHA-NI does not include SHA-512. The
+SHA-512 instructions Intel has added since (`VSHA512RNDS2`, `VSHA512MSG1`, `VSHA512MSG2`) exist only in a few
+recent CPUs, and none of the machines this project is tested on has them. A backend that nothing here can execute
+is not worth shipping unverified, so on x86 SHA-384, SHA-512 and SHA-512/t run on the scalar backend, including
+its BMI1/BMI2 build.
+
+SHA-256 does have one x86 backend that is not SHA-NI. x86-64 CPUs with AVX2 but without SHA-NI, which means Intel's
+cores from Haswell until Ice Lake, get the design from Intel's white paper *Fast SHA-256 Implementations on Intel
+Architecture Processors*: AVX2 computes the message schedules of two blocks at once, one in each 128-bit half of a
+register, with the round constants already added, while the rounds stay in general-purpose registers, using BMI2's
+`rorx` and BMI1's `andn`.
 
 The four ARMv8.2 instructions are an unusually good fit. Keccak's round is almost entirely XOR, rotate and
 and-not, and each instruction collapses a whole pattern of them: `EOR3` is a three-way XOR, `RAX1` is
@@ -93,8 +111,8 @@ SHA-3, the same state lane — of a *different* message, and one ordinary pass a
 | SHA-3 | x86_64 | SSE2 (baseline) | 2 |
 | SHA-3 | aarch64 | `sha3` / FEAT_SHA3 | 2 |
 
-That is a different shape of API, so it is a different function. `md5::digest` and `sha3::sha3_256` hash one
-message; `md5::digest_many` and `sha3::sha3_256_many` take a slice of messages and return their digests. Each
+That is a different shape of API, so it is a different function. `Md5::digest` and `sha3::sha3_256` hash one
+message; `Md5::digest_many` and `sha3::sha3_256_many` take a slice of messages and return their digests. Each
 fills the widest backend the CPU supports, then steps down through the narrower ones with whatever is left
 over, so a batch of 15 messages is not thrown back onto the scalar path by a granularity cliff. Messages need
 not be the same length: all lanes advance together for as long as every one of them still has a block left, and
@@ -141,37 +159,92 @@ available.
 
 The one other use is an empty block of inline assembly in SHA-256's two aarch64 backends, scalar and FEAT_SHA256.
 It emits no instruction, touches no memory, and only stops the compiler from rearranging equivalent arithmetic into
-a slower order (see [SHA-256](#accelerating-it)).
+a slower order (`src/sha2/sha256/scalar.rs` and `src/sha2/sha256/aarch64.rs`).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Module layout
+
+Each algorithm is one public module. The backends inside it (`scalar`, `aarch64`, `x86`, ...) are private, so what
+you import is the same on every CPU, and the backend is chosen at runtime:
+
+```text
+cryptors
+├── Digest                           the trait every fixed-output hash implements, re-exported at the root
+├── md5
+│   └── Md5
+├── sha1
+│   └── Sha1
+├── sha2                             one module for the whole FIPS 180-4 family
+│   ├── Sha224, Sha256               32-bit words
+│   └── Sha384, Sha512,              64-bit words
+│       Sha512_224, Sha512_256
+└── sha3                             free functions: the XOFs do not fit the trait
+    ├── sha3_224, sha3_256, sha3_384, sha3_512
+    ├── shake128, shake256
+    └── a `_hex` and a `_many` form of each
+```
+
+The SHA-2 functions are all imported from `sha2`, as in `cryptors::sha2::Sha256`. The two directories under
+`src/sha2/` (`sha256/` and `sha512/`) are an implementation detail, and the [SHA-256](#sha-256) and
+[SHA-512](#sha-512) sections below cover the 32-bit and the 64-bit functions respectively. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the layout of the source tree.
+
+## Example
+
+MD5, SHA-1 and the six SHA-2 functions (SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224 and SHA-512/256) are
+zero-sized types that implement one trait, `cryptors::Digest`. Bring it into scope to call them, or take
+`D: Digest` to be generic over the hash (HMAC, HKDF and PBKDF2 will do exactly that):
+
+```rust
+use cryptors::{Digest, md5::Md5, sha1::Sha1, sha2::{Sha256, Sha512}, sha3};
+
+// A fixed-output hash is a type, and `digest` returns a `[u8; N]` of the right size for it.
+let digest: [u8; 32] = Sha256::digest(b"abc");
+assert_eq!(digest.len(), Sha256::OUTPUT_LEN);
+assert_eq!(
+    Sha256::hex_digest(b"abc"),
+    "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+);
+
+// They share the `Digest` trait, so code can be generic over the hash.
+fn hash_len<D: Digest>() -> usize {
+    D::digest(b"abc").as_ref().len()
+}
+assert_eq!(hash_len::<Md5>(), 16);
+assert_eq!(hash_len::<Sha1>(), 20);
+assert_eq!(hash_len::<Sha512>(), 64);
+
+// SHA-3 is a set of functions in its own module.
+assert_eq!(sha3::sha3_256(b"abc").len(), 32);
+```
+
+Each hash provides `digest`, which returns a `[u8; N]`, plus the constants `BLOCK_LEN` and `OUTPUT_LEN`. `hex_digest`
+and `digest_many` come with the trait; MD5 overrides `digest_many` with its SIMD multi-buffer implementation. The
+dispatch is static, so a generic call compiles to the same code as a direct one. SHA-3 is not on the trait yet.
 
 ## MD5
 
 MD5, specified in [RFC 1321](https://www.rfc-editor.org/info/rfc1321), is a cryptographic hash function that takes an
 arbitrary-length message and produces a 128-bit (16-byte) digest.
 
-### How it works
+### Usage
 
-1. **Padding.** The message is padded so its length is congruent to 448 mod 512 bits: a single `1` bit is appended,
-   followed by `0` bits, followed by a 64-bit little-endian integer encoding the original message length in bits.
-   The padded message is now a multiple of 512 bits (16 32-bit words).
-2. **Initialization.** Four 32-bit state words (`A`, `B`, `C`, `D`) are set to fixed initial values.
-3. **Block processing.** The message is processed in 512-bit chunks. Each chunk goes through 4 rounds of 16
-   operations each (64 operations total), where every operation:
-   - applies one of four nonlinear functions (`F`, `G`, `H`, `I`) to three of the state words,
-   - adds a chunk-of-message word and a round-specific constant (derived from the sine function),
-   - rotates the result left by a round-specific amount,
-   - adds it to one of the state words, then rotates the four state words.
-4. **Output.** After all chunks are processed, `A`, `B`, `C`, `D` are concatenated to form the 128-bit digest.
+```rust
+use cryptors::{Digest, md5::Md5};
 
-Step 3 is where all the time goes, and unlike SHA-1 no CPU has an instruction for it — the 64 operations are
-strictly sequential, so there is no parallelism to exploit inside a single message. The 64 operations of
-*different* messages, however, are completely independent, which is what `md5::digest_many` exploits. See
-[Hardware acceleration](#hardware-acceleration).
+let digest: [u8; 16] = Md5::digest(b"abc");
+assert_eq!(Md5::hex_digest(b"abc"), "900150983cd24fb0d6963f7d28e17f72");
+assert_eq!(digest[0], 0x90);
 
-### Why it is cryptographically broken
+// Several independent messages, hashed side by side in SIMD lanes.
+let digests: Vec<[u8; 16]> = Md5::digest_many(&[b"abc", b"", b"a longer message"]);
+assert_eq!(digests[0], digest);
+```
 
-MD5 is considered broken for security purposes for several reasons:
+### Security
+
+MD5 is cryptographically broken, for several reasons:
 
 - **Collision attacks.** In 2004, researchers demonstrated practical collisions — two different inputs that produce
   the same MD5 digest. Modern hardware can now generate chosen-prefix collisions in seconds, meaning an attacker can
@@ -197,7 +270,7 @@ cargo test md5   # known-answer vectors and differential tests against the scala
 ### Benchmarking
 
 ```sh
-cargo test --release md5 -- --ignored --nocapture   # cryptors; names the backend selected on your machine
+cargo test --release md5 -- --ignored --nocapture --test-threads=1   # cryptors; names the backend selected on your machine
 cd bench/md5cmp && go test -v                           # the Go stdlib counterpart
 ```
 
@@ -223,28 +296,22 @@ benchmarked on an x86 CPU.
 SHA-1, specified in [RFC 3174](https://www.rfc-editor.org/info/rfc3174), is a cryptographic hash function that
 takes an arbitrary-length message (up to 2^64 - 1 bits) and produces a 160-bit (20-byte) digest.
 
-### How it works
+### Usage
 
-1. **Padding.** The message is padded so its length is congruent to 448 mod 512 bits: a single `1` bit is appended,
-   followed by `0` bits, followed by a 64-bit big-endian integer encoding the original message length in bits.
-   The padded message is now a multiple of 512 bits (16 32-bit words).
-2. **Initialization.** Five 32-bit state words (`H0`..`H4`) are set to fixed initial values.
-3. **Block processing.** The message is processed in 512-bit chunks. Each chunk's 16 32-bit words are expanded into
-   an 80-word schedule, where each new word is the XOR of four earlier words rotated left by one bit. The chunk then
-   goes through 80 operations split into 4 rounds of 20, where every operation:
-   - applies one of three nonlinear functions to three of the state words (a fourth, parity, function is reused for
-     two of the rounds),
-   - adds a schedule word and a round-specific constant,
-   - rotates and recombines the five state words.
-4. **Output.** After all chunks are processed, `H0`..`H4` are concatenated to form the 160-bit digest.
+```rust
+use cryptors::{Digest, sha1::Sha1};
 
-Step 3 is where almost all the time goes, and it is what both aarch64 and x86 provide dedicated instructions
-for: a single instruction computes four of the 80 operations, and another expands four schedule words at once.
-See [Hardware acceleration](#hardware-acceleration).
+let digest: [u8; 20] = Sha1::digest(b"abc");
+assert_eq!(
+    Sha1::hex_digest(b"abc"),
+    "a9993e364706816aba3e25717850c26c9cd0d89d"
+);
+assert_eq!(digest[0], 0xa9);
+```
 
-### Why it is cryptographically broken
+### Security
 
-SHA-1 is considered broken for security purposes for several reasons:
+SHA-1 is cryptographically broken, for several reasons:
 
 - **Collision attacks.** In 2017, the SHAttered attack produced the first practical SHA-1 collision, and
   chosen-prefix collisions (letting an attacker pick the content of both colliding messages) followed in 2020.
@@ -268,7 +335,7 @@ cargo test sha1   # known-answer vectors and differential tests against the scal
 ### Benchmarking
 
 ```sh
-cargo test --release sha1 -- --ignored --nocapture   # cryptors; names the backend selected on your machine
+cargo test --release sha1 -- --ignored --nocapture --test-threads=1   # cryptors; names the backend selected on your machine
 cd bench/sha1cmp && go test -v                           # the Go stdlib counterpart
 ```
 
@@ -288,7 +355,8 @@ same way as SHA-1 and MD5 before them — a Merkle-Damgard construction, in whic
 folds the padded message in one block at a time — but with a much larger and better-mixed compression function.
 Decades of cryptanalysis have not produced a practical attack on either.
 
-FIPS 180-4 defines six functions in the family. This crate implements the two that share one algorithm:
+FIPS 180-4 defines six functions in the family. This crate implements all of them; the two that share the 32-bit
+algorithm are described here:
 
 | Function | Output | Block | Initial state |
 |----------|--------|-------|---------------|
@@ -297,77 +365,30 @@ FIPS 180-4 defines six functions in the family. This crate implements the two th
 
 SHA-224 is not a truncated SHA-256: it starts from a different initial state, so the two give unrelated digests
 for the same input. The 64-bit members of the family (SHA-384, SHA-512, SHA-512/224, SHA-512/256) use a different
-word size and are listed separately in the table above.
+word size and are described under [SHA-512](#sha-512).
 
-### How it works
-
-1. **Padding.** The message is padded so its length is congruent to 448 mod 512 bits: a single `1` bit is appended,
-   followed by `0` bits, followed by a 64-bit big-endian integer encoding the original message length in bits.
-   The padded message is now a multiple of 512 bits (16 32-bit words).
-2. **Initialization.** Eight 32-bit state words (`H0`..`H7`) are set to the initial state of the function being
-   computed.
-3. **Message schedule.** The 16 words of each 512-bit chunk are expanded into 64. Every new word is the sum of four
-   earlier ones, two of which are first mixed through a pair of rotate-and-shift functions (`σ0` and `σ1`).
-4. **Compression.** The chunk then goes through 64 rounds. Each round keeps eight working variables (`a`..`h`) and:
-   - computes `Ch(e, f, g)` (a bitwise choice) and `Maj(a, b, c)` (a bitwise majority),
-   - rotates `e` and `a` by three different amounts each and XORs the results (`Σ1` and `Σ0`),
-   - adds a schedule word and a round constant (the cube roots of the first 64 primes),
-   - shifts the eight variables down by one place, with two of them receiving new values.
-
-   The eight variables are added back into the state at the end of the chunk.
-5. **Output.** After all chunks are processed, the state words are concatenated big-endian: all eight make the
-   256-bit SHA-256 digest, and the first seven make the 224-bit SHA-224 digest.
-
-Step 4 is where all the time goes, and unlike MD5 it is what both aarch64 and x86 provide dedicated instructions
-for. See [Hardware acceleration](#hardware-acceleration).
-
-### Accelerating it
-
-Hashing one message is serial — chunk `n + 1` cannot start until chunk `n` has finished — so the only thing worth
-accelerating is the compression function itself, and both common CPU families have instructions for exactly that.
-On aarch64 that is `SHA256H` and `SHA256H2`, which each advance half of the state by four rounds, with `SHA256SU0`
-and `SHA256SU1` producing four schedule words at a time. On x86 it is SHA-NI's `SHA256RNDS2`, two rounds per
-instruction, with `SHA256MSG1` and `SHA256MSG2` for the schedule. Both are described under
-[hardware acceleration](#hardware-acceleration) above, and both are selected automatically at runtime. Unlike MD5
-and SHA-3 there is no multi-message API: the instructions already cover what a batch would have been for.
-
-x86-64 CPUs with AVX2 but without SHA-NI, which means Intel's cores from Haswell until Ice Lake, get the design from
-Intel's white paper *Fast SHA-256 Implementations on Intel Architecture Processors*. AVX2 computes the message
-schedules of two blocks at once, one in each 128-bit half of a register, with the round constants already added.
-The rounds stay in general-purpose registers, using BMI2's `rorx` and BMI1's `andn`. The first block's rounds
-overlap with the vector work, and the second block's need no schedule work at all.
-
-Everything else runs on the scalar backend, which does as much as plain integer code can. It is fully unrolled, so
-every schedule index and round constant is known at compile time, and it computes each schedule word in the middle
-of the rounds, right before the round that needs it, instead of expanding 16 words at a time between groups of
-rounds. The rounds then overlap with the schedule instead of waiting for it, which measured 1.6x faster on the
-Apple M1 Pro used for the benchmarks below.
-
-Within a block the rounds form one dependency chain, so what sets the speed is how many instructions sit between
-one round's `e` and the next, not how many there are in total, and the compiler optimizes for the total. On aarch64
-two of its choices cost the most:
-
-- It folds rotates into the XORs that use them (`eor w0, w1, w2, ror #n`). On the M1 that form takes two cycles,
-  where a plain rotate or XOR takes one, so each `Σ` costs five cycles instead of three.
-- It adds the values it has loaded, the round constant and the schedule word, last. That leaves five additions
-  between `Ch` and the new `e`.
-
-So the aarch64 build keeps the rotates separate and adds up `h + K[t] + W[t]` and `d` first, off the chain. Both are
-pinned in place with empty inline-assembly barriers, which emit no instruction. Two smaller changes go with them:
-`Maj` reuses the previous round's `a ^ b`, and the round constants are loaded from a table instead of being built
-from immediates. Together these make the backend 1.2x faster on the M1 Pro. On x86-64, with 16 registers instead of
-31, the regrouping costs more in spills than it saves, so it is not applied there. Instead, CPUs with BMI1 and BMI2
-get a second build of the same code, using `rorx` and `andn`, with about 17% fewer instructions per block.
+### Usage
 
 ```rust
-use cryptors::sha256;
+use cryptors::{Digest, sha2::{Sha224, Sha256}};
 
-let digest = sha256::sha256(b"one message");     // [u8; 32]
-let short = sha256::sha224(b"one message");      // [u8; 28]
-let hex = sha256::sha256_hex(b"abc");            // "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+let digest: [u8; 32] = Sha256::digest(b"abc");
+assert_eq!(
+    Sha256::hex_digest(b"abc"),
+    "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+);
+assert_eq!(digest[0], 0xba);
+
+// SHA-224 is a separate algorithm with its own initial state, not a truncated SHA-256.
+let short: [u8; 28] = Sha224::digest(b"abc");
+assert_eq!(
+    Sha224::hex_digest(b"abc"),
+    "23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7"
+);
+assert_eq!(short[0], 0x23);
 ```
 
-### Security status
+### Security
 
 SHA-224 and SHA-256 are not broken. There is no known collision or preimage attack better than brute force on
 either, and both are suitable for digital signatures, certificate signing and integrity checks.
@@ -382,7 +403,7 @@ property for storing passwords; use a password-hashing construction such as PBKD
 ### Testing
 
 ```sh
-cargo test sha256   # known-answer vectors and differential tests against the scalar reference
+cargo test sha2::sha256     # known-answer vectors and differential tests against the scalar reference
 ```
 
 The known-answer tests include NIST's published example messages, and digests of inputs whose lengths straddle the
@@ -394,7 +415,7 @@ implementation (OpenSSL).
 ```sh
 # cryptors: every backend your CPU supports, starting with the one the public functions use. One test thread,
 # so the benchmarks don't compete with each other for the CPU.
-cargo test --release sha256 -- --ignored --nocapture --test-threads=1
+cargo test --release sha2::sha256 -- --ignored --nocapture --test-threads=1
 cd bench/sha256cmp && go test -v                        # Go's crypto/sha256 as shipped
 cd bench/sha256cmp && go test -tags purego -v           # Go's portable code, the counterpart of our scalar backend
 cd bench/sha256cmp && GODEBUG=cpu.sha=off go test -v    # x86-64 only: Go's AVX2 path, the counterpart of x86_avx2
@@ -423,7 +444,7 @@ Each cryptors column has a Go counterpart:
   cause. An empty inline-assembly barrier that makes the compiler place the copy Go's way closed the gap. Keeping all
   64 round constants in registers, as Go does, makes no difference, because the compiler already does it.
 - **Scalar vs Go portable.** Go's portable code is what it runs on every platform without assembly. Our scalar
-  backend is 1.34x faster (see [Accelerating it](#accelerating-it)).
+  backend is 1.34x faster.
 
 The instructions buy 5.8x over scalar.
 
@@ -460,49 +481,49 @@ The last two are extendable-output functions (XOFs): instead of a fixed-size dig
 many output bytes as they need — useful as a building block for key derivation and other constructions that
 want a pseudorandom stream rather than a single fixed-width digest.
 
-### How it works
-
-1. **State.** The permutation operates on a 1600-bit state, viewed as a 5x5 array of 64-bit lanes. `rate` and
-   `capacity` always add up to 1600 bits; a smaller rate (as used by the larger digests) means more of the
-   state is kept secret between permutations, which is what buys the extra security margin.
-2. **Absorbing.** The message is padded with `pad10*1`: a domain-separation suffix (`01` for SHA3-*, `1111`
-   for SHAKE*) followed by a `1` bit, zero bits, and a final `1` bit, so the padded length is a multiple of the
-   rate. Each rate-sized block is XORed into the state, with the Keccak-f[1600] permutation run in between.
-3. **Permuting.** Keccak-f[1600] runs 24 rounds, each applying five step mappings to the whole state: theta
-   (XOR each lane with the parity of two neighboring columns), rho (rotate each lane by a fixed, lane-specific
-   amount), pi (permute the lanes' positions), chi (XOR each lane with a nonlinear function of its row), and
-   iota (XOR a round-specific constant into one lane to break symmetry between rounds).
-4. **Squeezing.** Once the whole message has been absorbed, output bytes are read directly off the state,
-   rate-sized block at a time, permuting again between blocks if more output is needed than one block holds.
-   The fixed-size digests simply stop after their digest length; the XOFs keep going for as long as the caller
-   asked.
-
-### Accelerating it
-
-All six functions are built on the same permutation, so there is only one thing worth accelerating. On aarch64
-that is ARMv8.2's `EOR3`/`RAX1`/`XAR`/`BCAX`. On x86, where no Keccak instruction exists, it is hashing several
-messages at once with one per vector lane. Both are described under
-[hardware acceleration](#hardware-acceleration) above, and both are selected automatically at runtime.
-
-Everything else runs on the scalar backend, which does as much as plain integer code can. It processes the
-state one row at a time and writes each row back over the slots it was read from, the "in-place" technique of
-the Keccak team's reference code, so about a dozen values are live at once instead of thirty. On x86-64 it
-also has a BMI1/BMI2 build, picked at runtime.
-
-The batch form is a separate set of functions, because it is a different shape of API:
+### Usage
 
 ```rust
 use cryptors::sha3;
 
-let digest = sha3::sha3_256(b"one message");                  // [u8; 32]
-let digests = sha3::sha3_256_many(&[b"many", b"messages"]);   // Vec<[u8; 32]>
-let xof = sha3::shake128_many(&[b"a", b"b"], 64);             // Vec<Vec<u8>>, 64 bytes each
+let digest: [u8; 32] = sha3::sha3_256(b"abc");
+assert_eq!(
+    sha3::sha3_256_hex(b"abc"),
+    "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532"
+);
+assert_eq!(digest[0], 0x3a);
+
+// The other fixed-size variants are sha3_224, sha3_384 and sha3_512, each with a `_hex` form.
+// SHAKE writes as many bytes as the output buffer holds.
+let mut xof = [0u8; 32];
+sha3::shake128(b"", &mut xof);
+assert_eq!(
+    sha3::shake128_hex(b"", 32),
+    "7f9c2ba4e88f827d616045507605853ed73b8093f6efbc88eb1a6eacfa66ef26"
+);
+assert_eq!(xof[0], 0x7f);
 ```
 
-`sha3_256_many` and its siblings hash in groups of 4 (AVX2) or 2 (SSE2, or aarch64 with FEAT_SHA3), so a whole
-group costs little more than a single digest. The messages do not have to be the same length.
+Hashing many messages at once is a separate set of functions, because it is a different shape of API. Each `_many`
+function takes a slice of messages and hashes them side by side, one per vector lane:
 
-### Security status
+```rust
+use cryptors::sha3;
+
+let digests: Vec<[u8; 32]> = sha3::sha3_256_many(&[b"many", b"messages"]);
+assert_eq!(digests[0], sha3::sha3_256(b"many"));
+assert_eq!(digests[1], sha3::sha3_256(b"messages"));
+
+// For SHAKE the output length is shared by the whole batch.
+let xofs: Vec<Vec<u8>> = sha3::shake128_many(&[b"a", b"b"], 64);
+assert_eq!(xofs[0].len(), 64);
+```
+
+They hash in groups of 4 (AVX2) or 2 (SSE2, or aarch64 with FEAT_SHA3), so a whole group costs little more than a
+single digest, and the messages do not have to be the same length. See
+[Hardware acceleration](#hardware-acceleration).
+
+### Security
 
 SHA-3 is not broken. It has no known collision, preimage, or length-extension attacks, and its sponge
 construction is immune to the length-extension issues that affect SHA-2's Merkle-Damgard design (feeding a
@@ -559,6 +580,120 @@ No x86 figures are given yet. Under Rosetta 2 the x86 code runs, but its speed s
 hardware: 256-bit AVX2, for instance, is emulated as pairs of 128-bit NEON operations. The x86 backends,
 including the BMI1/BMI2 scalar build, are therefore verified for *correctness* only. The manual `Benchmarks`
 workflow (`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
+
+## SHA-512
+
+SHA-384, SHA-512, SHA-512/224 and SHA-512/256, specified in [FIPS 180-4](https://csrc.nist.gov/pubs/fips/180-4/upd1/final),
+are the four 64-bit members of the SHA-2 family. They are built exactly like [SHA-256](#sha-256) — a Merkle-Damgard
+construction around a compression function of rounds — but on 64-bit words: eight of them in the state, a 128-byte
+block and 80 rounds. Each operation handles twice as many bits, so on a 64-bit CPU without dedicated instructions
+SHA-512 usually hashes a long message faster than SHA-256 does (1.3x in the scalar backends here, see Benchmarking
+below).
+
+| Function | Output | Block | Initial state |
+|----------|--------|-------|---------------|
+| SHA-384 | 384 bits (48 bytes) | 1024 bits (128 bytes) | first 64 bits of the fractional parts of the square roots of the 9th–16th primes |
+| SHA-512 | 512 bits (64 bytes) | 1024 bits (128 bytes) | first 64 bits of the fractional parts of the square roots of the first eight primes |
+| SHA-512/224 | 224 bits (28 bytes) | 1024 bits (128 bytes) | generated by the SHA-512/t procedure, from the string `SHA-512/224` |
+| SHA-512/256 | 256 bits (32 bytes) | 1024 bits (128 bytes) | generated by the SHA-512/t procedure, from the string `SHA-512/256` |
+
+None of the shorter functions is a truncated SHA-512: each starts from its own initial state, so the digests are
+unrelated to SHA-512's for the same input. SHA-512/t is a family of functions whose initial state FIPS 180-4
+derives, so that `t` does not need a constant of its own: it is what SHA-512 outputs for the string `SHA-512/t`,
+when started from SHA-512's initial state XOR `0xa5a5a5a5a5a5a5a5`. A test runs that procedure for `t` = 224 and
+256 and checks it against the constants in the code. The crate implements the two values of `t`, 224 and 256, that
+the standard approves; SHA-512/t for other values of `t` is not provided.
+
+### Usage
+
+```rust
+use cryptors::{Digest, sha2::{Sha384, Sha512, Sha512_224, Sha512_256}};
+
+let digest: [u8; 64] = Sha512::digest(b"abc");
+assert_eq!(
+    Sha512::hex_digest(b"abc"),
+    "ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f"
+);
+assert_eq!(digest[0], 0xdd);
+
+// The others are separate algorithms with their own initial states, not truncated SHA-512 digests.
+let short: [u8; 48] = Sha384::digest(b"abc");
+assert_eq!(short[0], 0xcb);
+assert_eq!(
+    Sha512_224::hex_digest(b"abc"),
+    "4634270f707b6a54daae7530460842e20e37ed265ceee9a43e8924aa"
+);
+assert_eq!(
+    Sha512_256::hex_digest(b"abc"),
+    "53048e2681941ef99b2e29b76b4c7dabe4c2d0c634fc6d46e0e2f13107e7af23"
+);
+```
+
+### Security
+
+SHA-384, SHA-512, SHA-512/224 and SHA-512/256 are not broken. There is no known collision or preimage attack better
+than brute force on any of them, and all four are suitable for digital signatures, certificate signing and
+integrity checks.
+
+They share the one weakness of the Merkle-Damgard construction that SHA-256 has, **length extension**, but SHA-384,
+SHA-512/224 and SHA-512/256 are protected from it by their truncated output. Whoever holds `sha512(m)` and the length
+of `m` can compute `sha512(m || padding || x)` without knowing `m`, because the digest *is* the final state, so
+`sha512(key || message)` is not a safe MAC — use HMAC. SHA-384 withholds 128 bits of the state, SHA-512/256 withholds
+256 and SHA-512/224 withholds 288, and an attacker has to guess the withheld bits before extending, which is far
+beyond reach. That is why SHA-512/256 is sometimes chosen over SHA-256 where length extension is a concern; HMAC is
+still the right way to build a MAC from any of them. SHA-3 does not have the problem at all. And, like SHA-256,
+SHA-512 is fast by design, which is the wrong property for storing passwords; use a password-hashing construction
+such as PBKDF2 instead.
+
+### Testing
+
+```sh
+cargo test sha2::sha512     # known-answer vectors and differential tests against the scalar reference, for all four functions
+```
+
+The known-answer tests include NIST's published example messages, and digests of inputs whose lengths straddle the
+block and padding boundaries (111, 112 and 113 bytes, 127, 128 and 129, and so on). The expected digests of all four
+functions come from two independent implementations, OpenSSL and Go's standard library, which agree with each
+other. On any CPU, `cargo test` runs every backend that CPU supports against the scalar one (the
+`matches_scalar_backend` test), and `--nocapture` names each backend it checked. The x86-64 build, including the
+BMI1/BMI2 one, passes the same tests under Docker (`--platform linux/amd64`).
+
+### Benchmarking
+
+```sh
+# cryptors: every backend your CPU supports, starting with the one the public functions use. One test thread,
+# so the benchmarks don't compete with each other for the CPU.
+cargo test --release sha2::sha512 -- --ignored --nocapture --test-threads=1
+cd bench/sha512cmp && go test -v                        # Go's crypto/sha512 as shipped
+cd bench/sha512cmp && go test -tags purego -v           # Go's portable code, the counterpart of our scalar backend
+```
+
+On an Apple M1 Pro, against Go's `crypto` package on the same machine (medians of three runs):
+
+| Workload | cryptors scalar | Go portable (`purego`) | cryptors accelerated | Go stdlib |
+|----------|-----------------|------------------------|----------------------|-----------|
+| SHA-384, one 64 MiB message | 541 MiB/s | 437 MiB/s | **1371 MiB/s** (FEAT_SHA512) | 1366 MiB/s |
+| SHA-512, one 64 MiB message | 540 MiB/s | 438 MiB/s | **1386 MiB/s** (FEAT_SHA512) | 1364 MiB/s |
+| SHA-512/224, one 64 MiB message | 541 MiB/s | 437 MiB/s | **1374 MiB/s** (FEAT_SHA512) | 1363 MiB/s |
+| SHA-512/256, one 64 MiB message | 540 MiB/s | 438 MiB/s | **1392 MiB/s** (FEAT_SHA512) | 1361 MiB/s |
+
+The four functions run the same 80 rounds and differ only in their initial state and in how many words they
+output, so their speeds are the same to within measurement noise.
+
+Each cryptors column has a Go counterpart:
+
+- **Accelerated vs Go stdlib.** Go's assembly runs the same four instructions, and the two land within about 2% of
+  each other, which is as far apart as two runs of the same program. Unlike SHA-256, no gap needed closing here.
+- **Scalar vs Go portable.** Go's portable code is what it runs on every platform without assembly. Our scalar
+  backend is 1.23–1.24x faster.
+
+The instructions buy 2.6x over scalar. Compared across the two algorithms on this machine, SHA-512's scalar backend
+is 1.32x faster than SHA-256's (540 against 409 MiB/s), but SHA-256 has instructions here too, and they are faster:
+2365 MiB/s against SHA-512's 1386.
+
+No x86 figures are given yet, for the same reason as SHA-256: nothing here can time real x86 hardware. The x86-64
+scalar backend, with and without BMI1/BMI2, is correctness-tested under Docker. The manual `Benchmarks` workflow
+(`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
 
 ## Contributing
 
