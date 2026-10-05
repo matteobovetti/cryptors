@@ -11,6 +11,10 @@ This library is heavily inspired by GoLang crypto library.
 I decided to create a single crate rather than a collection of smaller crates to simplify usage and reduce dependencies.
 Other implementations, require to add multiple crates to your project if you are using different algorithms. With Cryptors, you only need to add a single one.
 
+## Rust Versions Compatibility
+
+This library requires Rust version 1.95 or higher. Inside the CI pipeline, we run tests against multiple Rust versions to ensure compatibility.
+
 ## Algorithm
 
 This library supports the following algorithms and packages:
