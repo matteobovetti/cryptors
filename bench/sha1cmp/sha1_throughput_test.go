@@ -1,5 +1,5 @@
 // Throughput comparison counterpart to the Rust `throughput` test in
-// src/sha/sha1.rs: same buffer size, warm-up, and best-of-5 methodology, so
+// src/sha1/digest.rs: same buffer size, warm-up, and best-of-5 methodology, so
 // the reported MiB/s numbers are directly comparable.
 package sha1cmp
 
