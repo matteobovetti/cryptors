@@ -20,10 +20,12 @@ jobs:
         # SHA-2 digest (SHA-384, SHA-512, SHA-512/t) runs on the scalar
         # backend, and where SHA-224/SHA-256 use SHA-NI if the runner's CPU has
         # it. The SHA-256 throughput test also times the AVX2, BMI and baseline
-        # scalar backends, the paths CPUs without SHA-NI take. aarch64: whether
+        # scalar backends, the paths CPUs without SHA-NI take. AES uses AES-NI,
+        # with the scalar backend timed beside it. aarch64: whether
         # FEAT_SHA3, if the runner has it, still beats scalar on a non-Apple
         # core -- Go's crypto/sha3 assumes it doesn't -- and whether FEAT_SHA512
-        # (reported under the same feature) does the same for SHA-512.
+        # (reported under the same feature) does the same for SHA-512. AES uses
+        # FEAT_AES where the runner has it.
         runner: [ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
     steps:

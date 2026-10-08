@@ -30,8 +30,8 @@ jobs:
         rust: ["1.99", "1.98", "1.97", "1.96", "1.95"]
         # Each arch is a different set of backends:
         #   x86_64  -- SSE2 always, plus whatever the runner's CPU adds
-        #              (AVX2, SHA-NI, BMI).
-        #   aarch64 -- NEON, plus FEAT_SHA1/SHA256/SHA3/SHA512 where the
+        #              (AVX2, SHA-NI, AES-NI, BMI).
+        #   aarch64 -- NEON, plus FEAT_AES/SHA1/SHA256/SHA3/SHA512 where the
         #              runner's cores have them. A native runner, so the
         #              crypto extensions run on silicon, not emulation.
         #   scalar  -- a target with no hardware backend at all, so the

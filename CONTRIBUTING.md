@@ -41,9 +41,11 @@ runs, and it must pass cleanly.
 
 ```text
 src/
-  lib.rs          one `pub mod` per algorithm, and the re-export of `Digest`
+  lib.rs          one `pub mod` per algorithm, and the re-export of `Digest` and `BlockCipher`
   digest.rs       the `Digest` trait shared by every fixed-output hash
-  md5/            one directory per algorithm
+  block_cipher.rs the `BlockCipher` trait shared by every block cipher
+  aes/            one directory per algorithm
+  md5/
   sha1/
   sha2/           a family of functions: one directory per word size
     mod.rs          the family's documentation, `mod sha256; mod sha512;`, re-exports
@@ -64,6 +66,11 @@ Inside an algorithm's directory (`src/sha1/` is a compact example,
 | `scalar.rs` | The portable implementation. It is always compiled, it is the fallback on any CPU, and it is the reference every other backend is tested against. |
 | `aarch64.rs`, `x86.rs`, ... | One file per hardware backend, named after its architecture (`x86_avx2.rs` is a second x86 backend). Each is gated with `#[cfg(target_arch = ...)]` and entered only after the dispatcher has confirmed the CPU feature it needs. |
 
+A block cipher has `cipher.rs` where a hash has `digest.rs`: the public types, the
+runtime backend dispatcher and the unit tests. It also has `schedule.rs`, the key
+schedule that every backend shares (only the S-box and the inverse MixColumns differ
+between them, and are passed in). `src/aes/` is the example.
+
 The backend modules are private: users see `cryptors::sha2::Sha256`, never the
 path through `sha256`. When several functions share one algorithm, as the six
 SHA-2 functions share two, they share a directory. Each word size then has the
@@ -73,11 +80,13 @@ BMI1/BMI2 check).
 
 The fixed-output hashes (MD5, SHA-1, SHA-2) are unit types that implement
 `Digest`. SHA-3 has not been converted yet and exposes free functions, as its
-extendable-output functions do not fit the trait.
+extendable-output functions do not fit the trait. The block ciphers (AES) implement
+`BlockCipher` instead, and are not unit types: a cipher holds the key schedule it
+was built with.
 
 Each algorithm in `bench/` is its own Go module with a throughput test that
-mirrors the Rust one (same buffer, warm-up and best-of-5 method). The SHA-2 and
-SHA-3 ones also split into `impl_asm_test.go` and `impl_purego_test.go`, so that
+mirrors the Rust one (same buffer, warm-up and best-of-5 method). The AES, SHA-2
+and SHA-3 ones also split into `impl_asm_test.go` and `impl_purego_test.go`, so that
 `-tags purego` selects Go's portable code, the counterpart of our `scalar`
 backend. `make bench-go` runs them all, and so does the manual `Benchmarks`
 workflow (`.github/workflows/bench.yml`) on GitHub's x86-64 and Arm runners.
@@ -97,7 +106,7 @@ is declared in `src/lib.rs`. When implementing one:
 - Write `scalar.rs` first and keep it correct on its own. A hardware backend
   goes in a file of its own, with a test (`matches_scalar_backend`) that checks
   it against `scalar` on every CPU that supports it.
-- Make a fixed-output hash implement `Digest`.
+- Make a fixed-output hash implement `Digest`, and a block cipher `BlockCipher`.
 - Where Go's standard library has the same algorithm, add its counterpart under
   `bench/<name>cmp/` and to `make bench-go`.
 - Update the algorithm table in `README.md`, setting the status to
@@ -140,6 +149,13 @@ shape:
 | `matches_scalar_backend` | Every other backend, called directly, against scalar, over lengths that straddle block and padding boundaries. The name is fixed: the README and the module docs cite it. |
 | `unaligned_input` | Every backend, on messages that start at every offset within a block. The vector backends load with unaligned instructions, and only this test runs the ones that are not the public path. |
 | `throughput` | Marked `#[ignore]`. |
+
+A block cipher's `cipher.rs` has the same module with vectors in place of padding
+boundaries: `known_answers` (the standards' examples), `chained` and `many_keys`
+(vectors from OpenSSL and Go, one long chain of encryptions and many different
+keys), `scalar_known_answers`, `matches_scalar_backend` (which also compares the
+round keys), `unaligned_input` (which moves the round keys as well as the block),
+`dropping_wipes_the_round_keys`, `debug_hides_the_key` and `throughput`.
 
 Where an algorithm has no externally generated boundary vectors (MD5 and SHA-1
 do not yet), a second, independently written padding routine stands in for

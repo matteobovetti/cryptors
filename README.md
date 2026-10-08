@@ -21,8 +21,7 @@ This library supports the following algorithms and packages:
 
 | Algorithm | Description | Status |
 |-----------|-------------|--------|
-| AES | FIPS 197: Advanced Encryption Standard | In progress |
-| Cipher modes | Standard block cipher modes (CBC, CFB, CTR, OFB, GCM) that wrap a block cipher such as AES | Planned |
+| AES | [FIPS 197](https://csrc.nist.gov/pubs/fips/197/final): Advanced Encryption Standard (AES-128, AES-192 and AES-256) | Implemented |
 | DES | FIPS 46-3 / TDEA: Data Encryption Standard and Triple DES | Planned |
 | DSA | FIPS 186-3: Digital Signature Algorithm | Planned |
 | ECDH | Elliptic Curve Diffie-Hellman over NIST curves and Curve25519 | Planned |
@@ -60,6 +59,8 @@ MD5, the crate takes the parallelism that is actually there instead.
 
 | Algorithm | Target | Feature | Instructions used |
 |-----------|--------|---------|-------------------|
+| AES | aarch64 | ARMv8 Cryptographic Extensions (`aes` / `FEAT_AES`, which Rust reports together with `FEAT_PMULL`) | `AESE`, `AESMC`, `AESD`, `AESIMC` |
+| AES | x86_64 | AES-NI | `AESENC`, `AESENCLAST`, `AESDEC`, `AESDECLAST`, `AESIMC` |
 | SHA-1 | aarch64 | ARMv8 Cryptographic Extensions (`sha2` / `FEAT_SHA1`) | `SHA1C`, `SHA1P`, `SHA1M`, `SHA1H`, `SHA1SU0`, `SHA1SU1` |
 | SHA-1 | x86_64 | SHA extensions (SHA-NI) | `SHA1RNDS4`, `SHA1NEXTE`, `SHA1MSG1`, `SHA1MSG2` |
 | SHA-224, SHA-256 | aarch64 | ARMv8 Cryptographic Extensions (`sha2` / `FEAT_SHA256`) | `SHA256H`, `SHA256H2`, `SHA256SU0`, `SHA256SU1` |
@@ -89,6 +90,16 @@ The four ARMv8.2 instructions are an unusually good fit. Keccak's round is almos
 and-not, and each instruction collapses a whole pattern of them: `EOR3` is a three-way XOR, `RAX1` is
 `a ^ rotl(b, 1)`, `XAR` fuses an XOR with a rotate, and `BCAX` is all three operations of the chi step at once.
 Together they take a round from roughly 155 operations to 66.
+
+AES is the opposite case from SHA-3: both architectures have instructions for it, and each one does most or all of
+a round of the cipher. On x86, `AESENC` is SubBytes, ShiftRows, MixColumns and AddRoundKey in a single instruction.
+On Arm, `AESE` is all of them but MixColumns, which is `AESMC`. A block takes 10, 12 or 14 rounds, so that many
+instructions on x86 and about twice as many on Arm, against the sixteen table lookups per round of the scalar
+backend. The key expansion uses the instructions too, for its S-box, so that on these backends no byte that depends
+on the key or the data is ever used as a table index. The scalar backend cannot say the same, see
+the Security part of [AES](#aes). The wider forms of the x86 instruction (VAES), which run two or four blocks at once, are
+not used: they only help code that has many blocks in hand at once, which a cipher called one block at a time does
+not.
 
 ### Multi-buffer SIMD, where no instruction exists
 
@@ -146,8 +157,9 @@ Three rules govern how all of this is done, so that acceleration never costs cor
    so a binary built on one machine stays correct on another. Where a feature is part of the target baseline
    (`sha2` on `aarch64-apple-darwin`, for instance) the check folds away at compile time and costs nothing.
 3. **Every backend is differential-tested against the scalar reference** — byte-for-byte, across input lengths
-   that straddle every block and padding boundary, and for the multi-buffer backends across batches whose
-   messages differ in length, so that lanes run out of blocks at different times. A backend that disagreed with
+   that straddle every block and padding boundary, for the multi-buffer backends across batches whose
+   messages differ in length, so that lanes run out of blocks at different times, and for AES across keys of
+   all three sizes, comparing the round keys as well as the blocks. A backend that disagreed with
    the specification would fail the test suite, not silently produce wrong digests.
 
 Because the vector instructions are intrinsics, these backends are where nearly all of the crate's `unsafe` lives.
@@ -157,13 +169,17 @@ Its scope is kept deliberately narrow:
   precondition can be violated by a caller.
 - The multi-buffer backends receive fixed-size arrays, assembled by safe scalar code, so every vector load and store
   is in bounds by construction.
+- The AES backends take their block and their round keys as fixed-size arrays, so each 16-byte load and store is in
+  bounds by construction.
 
-In both cases the only obligation left is the one the dispatcher has already discharged: that the CPU feature is
+In every case the only obligation left is the one the dispatcher has already discharged: that the CPU feature is
 available.
 
-The one other use is an empty block of inline assembly in SHA-256's two aarch64 backends, scalar and FEAT_SHA256.
-It emits no instruction, touches no memory, and only stops the compiler from rearranging equivalent arithmetic into
-a slower order (`src/sha2/sha256/scalar.rs` and `src/sha2/sha256/aarch64.rs`).
+There are two other uses. One is an empty block of inline assembly in SHA-256's two aarch64 backends, scalar and
+FEAT_SHA256. It emits no instruction, touches no memory, and only stops the compiler from rearranging equivalent
+arithmetic into a slower order (`src/sha2/sha256/scalar.rs` and `src/sha2/sha256/aarch64.rs`). The other is the
+volatile write that overwrites an AES cipher's round keys with zeros when it is dropped, which the compiler would
+otherwise delete as a store nobody reads (`src/aes/schedule.rs`).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -174,7 +190,10 @@ you import is the same on every CPU, and the backend is chosen at runtime:
 
 ```text
 cryptors
+├── BlockCipher                      the trait every block cipher implements, re-exported at the root
 ├── Digest                           the trait every fixed-output hash implements, re-exported at the root
+├── aes
+│   └── Aes128, Aes192, Aes256
 ├── md5
 │   └── Md5
 ├── sha1
@@ -226,6 +245,170 @@ assert_eq!(sha3::sha3_256(b"abc").len(), 32);
 Each hash provides `digest`, which returns a `[u8; N]`, plus the constants `BLOCK_LEN` and `OUTPUT_LEN`. `hex_digest`
 and `digest_many` come with the trait; MD5 overrides `digest_many` with its SIMD multi-buffer implementation. The
 dispatch is static, so a generic call compiles to the same code as a direct one. SHA-3 is not on the trait yet.
+
+The AES ciphers are not hashes and do not implement `Digest`. They implement `BlockCipher`, a trait of the same shape
+for keyed permutations of fixed-size blocks: a cipher is built from a key with `new`, which runs the key schedule once,
+and then transforms blocks with `encrypt_block` and `decrypt_block`. See [AES](#aes).
+
+## AES
+
+AES, specified in [FIPS 197](https://csrc.nist.gov/pubs/fips/197/final), is a block cipher: a permutation of 128-bit
+blocks chosen by a key, together with the permutation that undoes it under the same key. NIST standardised it in 2001
+as the successor to DES, from the Rijndael design of Joan Daemen and Vincent Rijmen, and it is the cipher behind most
+encryption in use today: TLS, disk and file encryption, Wi-Fi. It is built from rounds of a substitution, a row
+shuffle, a column mix and a key addition, and it is not a hash, so it does not implement `Digest`. It implements
+`BlockCipher`, which has the same shape (associated lengths and array types, static dispatch) but holds a key. The
+cipher modes on the list above will be generic over it, just as HMAC will be over `Digest`.
+
+FIPS 197 defines three variants:
+
+| Cipher | Key | Block | Rounds |
+|--------|-----|-------|--------|
+| AES-128 | 128 bits (16 bytes) | 128 bits (16 bytes) | 10 |
+| AES-192 | 192 bits (24 bytes) | 128 bits (16 bytes) | 12 |
+| AES-256 | 256 bits (32 bytes) | 128 bits (16 bytes) | 14 |
+
+The block is always 128 bits; the key size only changes the number of rounds and the key expansion. A longer key is
+not a longer version of a shorter one: it is a different permutation. What the crate provides is the cipher of FIPS
+197 itself, one block at a time. A mode of operation (CBC, CTR, GCM, ...) is what turns it into encryption of a
+message, and that is a separate item on the list above.
+
+### Usage
+
+```rust
+use cryptors::{BlockCipher, aes::{Aes128, Aes256}};
+
+// FIPS 197, Appendix B.
+let key = [
+    0x2b, 0x7e, 0x15, 0x16, 0x28, 0xae, 0xd2, 0xa6,
+    0xab, 0xf7, 0x15, 0x88, 0x09, 0xcf, 0x4f, 0x3c,
+];
+let plaintext = [
+    0x32, 0x43, 0xf6, 0xa8, 0x88, 0x5a, 0x30, 0x8d,
+    0x31, 0x31, 0x98, 0xa2, 0xe0, 0x37, 0x07, 0x34,
+];
+
+// Building the cipher runs the key schedule once; every block then reuses it.
+let cipher = Aes128::new(&key);
+let ciphertext: [u8; 16] = cipher.encrypt_block(&plaintext);
+assert_eq!(
+    ciphertext,
+    [
+        0x39, 0x25, 0x84, 0x1d, 0x02, 0xdc, 0x09, 0xfb,
+        0xdc, 0x11, 0x85, 0x97, 0x19, 0x6a, 0x0b, 0x32,
+    ]
+);
+assert_eq!(cipher.decrypt_block(&ciphertext), plaintext);
+
+// The key sizes are separate types with the same interface, so code can be generic over the cipher.
+fn encrypt_zeros<C: BlockCipher>(key: &C::Key) -> C::Block {
+    C::new(key).encrypt_block(&C::Block::default())
+}
+assert_eq!(encrypt_zeros::<Aes256>(&[0; 32]).len(), Aes256::BLOCK_LEN);
+```
+
+### Security
+
+AES is not broken. The best known attack on the full cipher, a biclique attack from 2011, finds the key only about 3 to
+5 times faster than trying every key, which changes nothing in practice. Related-key attacks on AES-192 and AES-256 are
+faster than that, but need encryptions under keys that differ in ways the attacker chooses; do not derive one key by
+changing a few bits of another.
+
+Three things to know when using it:
+
+- **It is a block cipher, not an encryption scheme.** `encrypt_block` encrypts 16 bytes. Calling it on every block of a
+  message independently (ECB) is not safe, because equal plaintext blocks give equal ciphertext blocks and the structure
+  of the message shows through. Nor is anything authenticated: a ciphertext that has been altered decrypts to something
+  else, without any error. Use a mode of operation, and an authenticated one for anything that crosses a network;
+  this crate does not have them yet.
+- **The hardware backends do not index memory by secrets. The scalar backend does.** With AES-NI or the Arm crypto
+  extensions, neither the key nor the data is ever used as a memory address or a branch condition, even during the key
+  expansion, and the instructions themselves are built to take the same time for every input; no CPU is known to do
+  otherwise, though Arm documents that guarantee only while its data-independent-timing mode (DIT) is on, and this
+  crate does not turn it on. The scalar backend looks up table entries at positions given by the state, and how long
+  a lookup takes depends on whether the CPU has that part of the table cached. That has recovered AES keys in
+  practice, both from a program on the same core (Osvik, Shamir and Tromer 2006) and, with many more samples, from the
+  response times of a server across a network (Bernstein 2005). It is a real difference from the SHA-2 functions, whose
+  work and memory accesses never depend on the message. The scalar backend is what runs on any CPU without AES
+  instructions (on Arm, that includes one with the AES instructions but without PMULL, since Rust reports `aes` only
+  with both), and on any target other than aarch64 and x86-64.
+- **Keys stay in memory for as long as the cipher does.** The round keys are overwritten with zeros when the cipher is
+  dropped, and `Debug` does not print them. That is best effort: copies the compiler made on the stack while a key was
+  expanded or a block processed are not reachable from here, and neither is the copy that moving a cipher (into a
+  `Box` or a `Vec`, say) can leave behind where it was. Where that matters, build the cipher where it will stay.
+
+### Testing
+
+```sh
+cargo test aes     # known-answer vectors and differential tests against the scalar reference
+```
+
+The known-answer tests include the examples of FIPS 197 (Appendix B, and the one NIST publishes for each key size,
+which the 2001 edition printed as Appendix C) and the ECB examples of NIST SP 800-38A, for all three key sizes and in
+both directions. Those have only a handful of keys, so two further sets come from OpenSSL and Go's standard library,
+which agree with each other: a thousand encryptions in a row, each on the previous ciphertext, for each key size, so
+that one wrong table entry cannot go unnoticed; and a thousand different keys for each size, which is what exercises
+the key expansion. Every test that uses a vector is run twice, through the public types and through the scalar backend
+alone, which on a machine with AES instructions the public types do not use. On any CPU, `cargo test` also runs every
+backend that CPU supports against the scalar one (the `matches_scalar_backend` test), comparing the round keys of both
+directions and the blocks, and `--nocapture` names each backend it checked.
+
+Unlike SHA-NI, AES-NI can be executed on a Mac: both Rosetta 2 and Docker's `linux/amd64` emulation support it. The
+x86-64 backend therefore passes these tests as it is, with the emulator supplying the instructions, where the SHA-NI
+backend could only be checked against a model of them written for the purpose. It has still not run on an x86 CPU.
+
+### Benchmarking
+
+```sh
+# cryptors: every backend your CPU supports, starting with the one the public types use. One test thread,
+# so the benchmarks don't compete with each other for the CPU.
+cargo test --release aes -- --ignored --nocapture --test-threads=1
+cd bench/aescmp && go test -v                        # Go's crypto/aes as shipped, and its CTR mode for reference
+cd bench/aescmp && go test -tags purego -v           # Go's portable code, the counterpart of our scalar backend
+```
+
+Both sides encrypt (or decrypt) 64 MiB in place, as independent 16-byte blocks with one call per block: ECB with no mode
+on top. Each takes the best of five passes after a warm-up pass. They start from the same bytes and print the first block
+after the passes; all four implementations print the same, which is a cross-check of its own.
+
+On an Apple M1 Pro, against Go's `crypto` package on the same machine (medians of five interleaved runs, in MiB/s):
+
+| Workload | cryptors scalar | Go portable (`purego`) | cryptors accelerated | Go stdlib |
+|----------|-----------------|------------------------|----------------------|-----------|
+| AES-128 encrypt | 444 | 327 | **11648** (FEAT_AES) | 2095 |
+| AES-128 decrypt | 441 | 322 | **11931** (FEAT_AES) | 2091 |
+| AES-192 encrypt | 361 | 273 | **8799** (FEAT_AES) | 1954 |
+| AES-192 decrypt | 362 | 271 | **9585** (FEAT_AES) | 1955 |
+| AES-256 encrypt | 306 | 235 | **8053** (FEAT_AES) | 1845 |
+| AES-256 decrypt | 306 | 234 | **7378** (FEAT_AES) | 1833 |
+
+The ciphers differ in rounds (10, 12 and 14), and the speed falls with them. Decrypting runs at about the speed of
+encrypting, as the equivalent inverse cipher gives their rounds the same shape: identical to within 2% in the scalar
+columns, and within 9%, in either direction, in the accelerated one.
+
+Each cryptors column has a Go counterpart, and the two accelerated columns need more care than the others:
+
+- **Scalar vs Go portable.** Go's portable code is what it runs on every platform without assembly. Both use lookup
+  tables, and our scalar backend is 1.30–1.37x faster. The first version of ours, with one table and a rotate after each
+  lookup, to save memory, was no faster than Go's (323 against 327 MiB/s for AES-128). Go keeps four tables, one per
+  row, and so does ours now. That takes twelve rotates out of every round, and the rotates sit on the path each round
+  waits on; it measured 37% faster, for 6 KiB more tables (8 KiB in all, for both directions).
+- **Accelerated vs Go stdlib.** Both run the same instructions, so the 4.0–5.7x between them is not AES. `cipher.Block`
+  takes one block per call, through an interface, and at 16 bytes a call the call is most of Go's time. Go's own bulk
+  path is CTR mode, which hands the whole buffer to the assembly; it reaches 6917, 6225 and 5724 MiB/s for the three key
+  sizes, even though it also builds the counters and XORs the keystream into the data (`TestThroughputBulk`, with no
+  Rust counterpart). Against that, cryptors encrypts 1.4–1.7x faster, on an ECB loop that does less work per block.
+  The loop gets there because the aarch64 backend is compiled into the caller's loop on this target (the instructions
+  are in its baseline), which keeps the round keys in registers and lets the CPU overlap independent blocks. A mode in
+  which each block waits for the one before it, like CBC encryption, cannot overlap them and will be slower; that is
+  not measured here.
+
+The instructions buy 24–27x over scalar.
+
+No x86 figures are given yet, for the same reason as the SHA functions: nothing here can time real x86 hardware, and
+Rosetta 2 translates AES-NI to Arm instructions, so its timings say nothing about an x86 CPU. The manual `Benchmarks`
+workflow (`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners, and the throughput test
+times the scalar backend there as well.
 
 ## MD5
 
