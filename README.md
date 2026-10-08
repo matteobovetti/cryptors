@@ -42,7 +42,6 @@ This library supports the following algorithms and packages:
 | SHA-256 | [FIPS 180-4](https://csrc.nist.gov/pubs/fips/180-4/upd1/final): SHA-224 and SHA-256 | Implemented |
 | SHA-3 | FIPS 202: SHA-3 and SHAKE extendable output functions | Implemented |
 | SHA-512 | [FIPS 180-4](https://csrc.nist.gov/pubs/fips/180-4/upd1/final): SHA-384, SHA-512, SHA-512/224, and SHA-512/256 | Implemented |
-| Subtle | Constant-time helpers that are useful in cryptographic code but need care to use correctly | Planned |
 | TLS | RFC 5246 / RFC 8446: TLS 1.2 and TLS 1.3 | Planned |
 | X.509 | A subset of the X.509 standard, with the shared ASN.1 structures for certificates, CRLs and OCSP (`pkix`) | Planned |
 
