@@ -2,12 +2,12 @@
 //! generator that produces the per-message secret numbers of ECDSA, as RFC 6979
 //! and FIPS 186-5 (appendix A.3.3) describe.
 //!
-//! It is built here, on a private HMAC, because the crate has no public one
-//! yet. It only generates the candidates for one signature, so it is created
-//! for each and dropped after.
+//! It runs on the crate's HMAC, [`Hmac`]. It only generates the candidates for
+//! one signature, so it is created for each and dropped after.
 
 use super::curve::sealed::Nonces;
 use crate::Digest;
+use crate::hmac::Hmac;
 use crate::wipe::wipe;
 use core::marker::PhantomData;
 
@@ -30,35 +30,6 @@ impl Drop for Secret {
     fn drop(&mut self) {
         wipe(&mut self.0);
     }
-}
-
-/// HMAC (FIPS 198-1, RFC 2104) with the hash `D`, of the concatenation of
-/// `parts`, under `key`. The tag is `D::OUTPUT_LEN` bytes, written to `out`.
-fn hmac<D: Digest>(key: &[u8], parts: &[&[u8]], out: &mut [u8]) {
-    assert_eq!(out.len(), D::OUTPUT_LEN);
-
-    // The key, padded with zeros to a block; a key longer than a block is
-    // replaced by its hash first.
-    let mut padded = Secret::with_capacity(D::BLOCK_LEN);
-    if key.len() > D::BLOCK_LEN {
-        padded.0.extend_from_slice(D::digest(key).as_ref());
-    } else {
-        padded.0.extend_from_slice(key);
-    }
-    padded.0.resize(D::BLOCK_LEN, 0);
-
-    let text: usize = parts.iter().map(|part| part.len()).sum();
-    let mut inner = Secret::with_capacity(D::BLOCK_LEN + text);
-    inner.0.extend(padded.0.iter().map(|byte| byte ^ 0x36));
-    for part in parts {
-        inner.0.extend_from_slice(part);
-    }
-    let inner_tag = D::digest(&inner.0);
-
-    let mut outer = Secret::with_capacity(D::BLOCK_LEN + D::OUTPUT_LEN);
-    outer.0.extend(padded.0.iter().map(|byte| byte ^ 0x5c));
-    outer.0.extend_from_slice(inner_tag.as_ref());
-    out.copy_from_slice(D::digest(&outer.0).as_ref());
 }
 
 /// The seed material of the instantiation: `entropy || nonce`, then each of the
@@ -128,24 +99,22 @@ impl<D: Digest> HmacDrbg<D> {
     /// data.
     fn update(&mut self, provided: &[u8]) {
         let len = D::OUTPUT_LEN;
-        let mut next = [0u8; MAX_OUTPUT_LEN];
         for separator in [0x00u8, 0x01] {
             // K = HMAC(K, V || separator || provided)
-            hmac::<D>(
-                &self.key[..len],
-                &[&self.v[..len], &[separator], provided],
-                &mut next[..len],
-            );
-            self.key = next;
-            // V = HMAC(K, V)
-            hmac::<D>(&self.key[..len], &[&self.v[..len]], &mut next[..len]);
-            self.v = next;
+            let key = Hmac::<D>::new(&self.key[..len]).mac_parts(&[
+                &self.v[..len],
+                &[separator],
+                provided,
+            ]);
+            self.key[..len].copy_from_slice(key.as_ref());
+            // V = HMAC(K, V), under the new K.
+            let v = Hmac::<D>::new(&self.key[..len]).mac(&self.v[..len]);
+            self.v[..len].copy_from_slice(v.as_ref());
             // Without provided data the second round is skipped.
             if provided.is_empty() {
                 break;
             }
         }
-        wipe(&mut next);
     }
 
     /// `HMAC_DRBG_Generate_algorithm` (section 10.1.2.5): fills `out` and moves
@@ -154,14 +123,15 @@ impl<D: Digest> HmacDrbg<D> {
     /// a valid number.
     pub(super) fn generate(&mut self, out: &mut [u8]) {
         let len = D::OUTPUT_LEN;
-        let mut next = [0u8; MAX_OUTPUT_LEN];
+        // K stays the same while V is drawn, so its padded key is hashed once.
+        let mac = Hmac::<D>::new(&self.key[..len]);
         for chunk in out.chunks_mut(len) {
             // V = HMAC(K, V)
-            hmac::<D>(&self.key[..len], &[&self.v[..len]], &mut next[..len]);
-            self.v = next;
+            let v = mac.mac(&self.v[..len]);
+            self.v[..len].copy_from_slice(v.as_ref());
             chunk.copy_from_slice(&self.v[..chunk.len()]);
         }
-        wipe(&mut next);
+        drop(mac);
         self.update(&[]);
     }
 }
@@ -261,17 +231,18 @@ mod tests {
         assert_eq!(plain, [&[1u8; 20][..], &[2; 5]].concat());
     }
 
-    /// HMAC against Python's `hmac` for every hash, for keys shorter than, equal
-    /// to and longer than the block, and for messages in one and several parts.
+    /// The HMAC the generator runs on, against Python's `hmac` for every hash,
+    /// for keys shorter than, equal to and longer than the block, and for
+    /// messages in one and several parts.
     #[test]
     fn hmac_matches_known_answers() {
         fn check<D: Digest>(rows: &[(&str, &str, &str)]) {
             for (key, text, tag) in rows {
                 let (key, text) = (key.as_bytes(), text.as_bytes());
-                let mut out = vec![0; D::OUTPUT_LEN];
-                hmac::<D>(key, &[text], &mut out);
+                let mac = Hmac::<D>::new(key);
+                let out = mac.mac(text);
                 assert_eq!(
-                    crate::digest::hex(&out),
+                    crate::digest::hex(out.as_ref()),
                     *tag,
                     "{}",
                     String::from_utf8_lossy(key)
@@ -279,9 +250,7 @@ mod tests {
 
                 // The parts are concatenated.
                 let (a, b) = text.split_at(text.len() / 2);
-                let mut split = vec![0; D::OUTPUT_LEN];
-                hmac::<D>(key, &[a, b, &[]], &mut split);
-                assert_eq!(out, split);
+                assert_eq!(mac.mac_parts(&[a, b, &[]]).as_ref(), out.as_ref());
             }
         }
         check::<Md5>(&super::super::vectors::HMAC_MD5);

@@ -155,7 +155,7 @@
 //! | `k * G` | the table of 15 multiples of `G` for each four-bit window, shared with the public keys of `ecdh` and built on first use: one addition per window and no doubling |
 //! | `k^-1`, `s^-1` | the number to the power `n - 2` (Fermat's little theorem), which is a fixed exponent, so the steps do not depend on the number |
 //! | `u * G + v * Q` | `u * G` from the same table, `v * Q` with a four-bit window, then one addition with the complete formulas of Renes, Costello and Batina |
-//! | `k` | an HMAC_DRBG (NIST SP 800-90A Rev. 1, section 10.1.2) on a small private HMAC, since the crate does not have a public one yet |
+//! | `k` | an HMAC_DRBG (NIST SP 800-90A Rev. 1, section 10.1.2) on the crate's HMAC, [`Hmac`](crate::hmac::Hmac) |
 //!
 //! - **Montgomery form for the order too.** The arithmetic modulo a prime in
 //!   `ecdh` is written for any modulus, as a function of the number of limbs and

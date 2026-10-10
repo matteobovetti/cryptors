@@ -146,7 +146,8 @@
 //! well as the streaming one. Under HMAC, the incremental form of each hash
 //! has to give the hash's one-shot digest for messages around every block and
 //! padding boundary, split at every byte, and for a long message in pieces of
-//! uneven sizes.
+//! uneven sizes. ECDSA's HMAC_DRBG, which runs on this HMAC, reproduces the
+//! per-message secret numbers of RFC 6979.
 //!
 //! ## Side channels
 //!
