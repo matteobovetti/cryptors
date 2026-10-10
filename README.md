@@ -22,9 +22,8 @@ This library supports the following algorithms and packages:
 | Algorithm | Description | Status |
 |-----------|-------------|--------|
 | AES | [FIPS 197](https://csrc.nist.gov/pubs/fips/197/final): Advanced Encryption Standard (AES-128, AES-192 and AES-256) | Implemented |
-| DES | FIPS 46-3 / TDEA: Data Encryption Standard and Triple DES | Planned |
-| DSA | FIPS 186-3: Digital Signature Algorithm | Planned |
-| ECDH | Elliptic Curve Diffie-Hellman over NIST curves and Curve25519 | Planned |
+| DES | [FIPS 46-3](https://csrc.nist.gov/pubs/fips/46-3/final): Data Encryption Standard and Triple DES (TDEA), withdrawn in 2005 and kept for legacy data | Implemented |
+| ECDH | [NIST SP 800-56A Rev. 3](https://csrc.nist.gov/pubs/sp/800/56/a/r3/final) and [RFC 7748](https://www.rfc-editor.org/info/rfc7748): Elliptic Curve Diffie-Hellman over P-256, P-384, P-521 and Curve25519 (X25519) | Implemented |
 | ECDSA | FIPS 186-5: Elliptic Curve Digital Signature Algorithm | Planned |
 | Ed25519 | Ed25519 signature algorithm | Planned |
 | Elliptic Curves | NIST P-224, P-256, P-384, and P-521 elliptic curves | Planned |
@@ -99,6 +98,23 @@ on the key or the data is ever used as a table index. The scalar backend cannot 
 the Security part of [AES](#aes). The wider forms of the x86 instruction (VAES), which run two or four blocks at once, are
 not used: they only help code that has many blocks in hand at once, which a cipher called one block at a time does
 not.
+
+DES is the case with nothing to accelerate. No instruction in the x86 or Arm cryptographic extensions implements it, and
+SIMD does not help with a block either: the sixteen rounds of a block are one chain, each round waiting on the one
+before it. What does run well on a vector unit is DES in "bitslice" form, which encrypts as many blocks side by side as
+a register has bits; it needs an interface that takes many blocks at once, and `BlockCipher` takes one. So DES and TDEA
+have no row in the tables above and run on their one scalar implementation everywhere. It folds `E` and `P` into the
+rounds (two rotations and eight lookups in tables of 64 words), does `IP` and its inverse as five exchanges of bit pairs
+with no table, and does TDEA's three stages with a single `IP` and a single inverse. See the Benchmarking part of
+[DES](#des) for what is left on the table.
+
+ECDH is the case where the hardware offers nothing and no clever layout of the work changes that. No x86 or Arm
+extension has an instruction for elliptic curve arithmetic, and the work is a long chain of multiplications of numbers
+of 256 to 521 bits, each waiting on the one before it. What the CPU does offer is a multiplier with a 128-bit result,
+which Rust reaches through `u128`, so ECDH has one portable implementation and no row in the tables above. The x86-64
+build uses plain `mulq`: the `mulx` and `adcx`/`adox` instructions of BMI2 and ADX, which the fastest x86 big-number code
+uses, are not in the x86-64 baseline, and a backend that used them behind a run-time check is not written. See the
+Benchmarking part of [ECDH](#ecdh) for what that costs where it can be measured.
 
 ### Multi-buffer SIMD, where no instruction exists
 
@@ -177,8 +193,10 @@ available.
 There are two other uses. One is an empty block of inline assembly in SHA-256's two aarch64 backends, scalar and
 FEAT_SHA256. It emits no instruction, touches no memory, and only stops the compiler from rearranging equivalent
 arithmetic into a slower order (`src/sha2/sha256/scalar.rs` and `src/sha2/sha256/aarch64.rs`). The other is the
-volatile write that overwrites an AES cipher's round keys with zeros when it is dropped, which the compiler would
-otherwise delete as a store nobody reads (`src/aes/schedule.rs`).
+volatile write that overwrites an AES or DES cipher's round keys, or an ECDH private key or shared secret, with zeros when
+it is dropped, which the compiler would otherwise delete as a store nobody reads (`src/aes/schedule.rs`,
+`src/des/schedule.rs` and, for ECDH, `src/wipe.rs`). Outside its tests, ECDH has no intrinsics and nothing else that is
+`unsafe`.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -193,6 +211,13 @@ cryptors
 ├── Digest                           the trait every fixed-output hash implements, re-exported at the root
 ├── aes
 │   └── Aes128, Aes192, Aes256
+├── des
+│   └── Des, TripleDes
+├── ecdh                             key agreement: neither a hash nor a cipher, so it has its own types
+│   ├── PrivateKey, PublicKey,       generic over the curve, so keys of two curves cannot be mixed
+│   │   SharedSecret
+│   ├── P256, P384, P521, X25519     the curves, which implement the sealed trait `Curve`
+│   └── Error
 ├── md5
 │   └── Md5
 ├── sha1
@@ -245,9 +270,15 @@ Each hash provides `digest`, which returns a `[u8; N]`, plus the constants `BLOC
 and `digest_many` come with the trait; MD5 overrides `digest_many` with its SIMD multi-buffer implementation. The
 dispatch is static, so a generic call compiles to the same code as a direct one. SHA-3 is not on the trait yet.
 
-The AES ciphers are not hashes and do not implement `Digest`. They implement `BlockCipher`, a trait of the same shape
-for keyed permutations of fixed-size blocks: a cipher is built from a key with `new`, which runs the key schedule once,
-and then transforms blocks with `encrypt_block` and `decrypt_block`. See [AES](#aes).
+The AES and DES ciphers are not hashes and do not implement `Digest`. They implement `BlockCipher`, a trait of the same
+shape for keyed permutations of fixed-size blocks: a cipher is built from a key with `new`, which runs the key schedule
+once, and then transforms blocks with `encrypt_block` and `decrypt_block`. The block and the key are types of the
+cipher, so the 16-byte blocks of AES and the 8-byte blocks of DES fit the same code. See [AES](#aes) and [DES](#des).
+
+Key agreement is neither of those. ECDH has no digest and no block, so its keys are types of their own: a
+`PrivateKey<C>` and a `PublicKey<C>`, generic over the curve `C` (`P256`, `P384`, `P521` or `X25519`, which implement
+the sealed trait `Curve`), and a `SharedSecret<C>` as the result of an exchange. Because the curve is a type, a private
+key of one curve and a public key of another do not compile together. See [ECDH](#ecdh).
 
 ## AES
 
@@ -408,6 +439,405 @@ No x86 figures are given yet, for the same reason as the SHA functions: nothing 
 Rosetta 2 translates AES-NI to Arm instructions, so its timings say nothing about an x86 CPU. The manual `Benchmarks`
 workflow (`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners, and the throughput test
 times the scalar backend there as well.
+
+## DES
+
+DES, specified in [FIPS 46-3](https://csrc.nist.gov/pubs/fips/46-3/final), is a block cipher: a permutation of 64-bit
+blocks chosen by a 56-bit key, together with the permutation that undoes it under the same key. It became the US federal
+standard in July 1977 and stayed it until NIST withdrew it in favour of AES. It is a Feistel network of 16 rounds whose only nonlinear
+step is eight small substitution tables, and, like AES, it is not a hash, so it implements `BlockCipher`. FIPS 46-3
+also defines TDEA, the Triple Data Encryption Algorithm, or Triple DES: three DES operations in a row under three keys.
+
+**DES is broken and TDEA is obsolete.** They are here for reading data that already exists and for talking to systems
+that have not moved on, not for protecting anything new. Use [AES](#aes).
+
+| Cipher | Type | Key | Block | Rounds |
+|--------|------|-----|-------|--------|
+| DES | `Des` | 64 bits (8 bytes), of which 56 are used | 64 bits (8 bytes) | 16 |
+| TDEA | `TripleDes` | 3 x 64 bits (24 bytes) | 64 bits (8 bytes) | 3 x 16 |
+
+TDEA **encrypts** under `K1`, **decrypts** under `K2` and **encrypts** under `K3`. Decrypting in the middle is what
+keeps it compatible with DES: if the three keys are equal, the first two steps cancel. FIPS 46-3 allows three keying
+options for the bundle `(K1, K2, K3)`, and `TripleDes` takes the bundle as one 24-byte key, so each option is a kind of
+key:
+
+| Keying option | Bundle | Remarks |
+|---------------|--------|---------|
+| 1 | `K1`, `K2` and `K3` independent | the intended use |
+| 2 | `K1` and `K2` independent, `K3 = K1` | "two-key" TDEA |
+| 3 | `K1 = K2 = K3` | single DES, with a longer key |
+
+What the crate provides is the cipher of FIPS 46-3 itself, one block at a time. A mode of operation (CBC, CTR, ...) is
+what turns it into encryption of a message, and that is a separate item on the list above.
+
+### Usage
+
+```rust
+use cryptors::{BlockCipher, des::{Des, TripleDes}};
+
+// FIPS 81, the ECB example: the key 0123456789abcdef and the text "Now is t".
+let key = [0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef];
+let plaintext = *b"Now is t";
+
+// Building the cipher runs the key schedule once; every block then reuses it.
+let cipher = Des::new(&key);
+let ciphertext: [u8; 8] = cipher.encrypt_block(&plaintext);
+assert_eq!(ciphertext, [0x3f, 0xa4, 0x0e, 0x8a, 0x98, 0x4d, 0x48, 0x15]);
+assert_eq!(cipher.decrypt_block(&ciphertext), plaintext);
+
+// TDEA takes the key bundle K1 || K2 || K3. With three equal keys (keying option 3) it is single DES.
+let bundle: [u8; 24] = [key, key, key].concat().try_into().unwrap();
+let triple = TripleDes::new(&bundle);
+assert_eq!(triple.encrypt_block(&plaintext), ciphertext);
+
+// The block is 8 bytes here, not 16, and code generic over the cipher does not mind.
+fn encrypt_zeros<C: BlockCipher>(key: &C::Key) -> C::Block {
+    C::new(key).encrypt_block(&C::Block::default())
+}
+assert_eq!(encrypt_zeros::<TripleDes>(&[0; 24]).len(), TripleDes::BLOCK_LEN);
+```
+
+### Security
+
+**DES has a 56-bit key, and trying every one is within reach.** In 1998 the Electronic Frontier Foundation's DES
+Cracker, built for under US$250,000, found a key in 56 hours, and in January 1999 it did so in 22 hours and 15 minutes
+with the help of distributed.net. A machine of 120 FPGAs that cost under US$10,000 (COPACOBANA, 2006) was shown to
+take under nine days on average, and the service crack.sh advertises the whole key space in about 26 hours. The attacks
+on the 16 rounds themselves, differential (Biham and Shamir, 2^47 chosen plaintexts) and linear (Matsui, 2^43 known
+plaintexts), beat exhaustive search on paper but need more data than anyone has; the short key is what matters.
+
+**TDEA has a larger key and still falls short.** A meet-in-the-middle attack brings three-key TDEA down to about 112
+bits, and NIST rates two-key TDEA at no more than 80. The bigger problem is the 64-bit block: two ciphertext blocks are
+equal by chance after about 2^32 blocks (32 GiB) under one key, and in the usual modes that tells an attacker the XOR of
+the two plaintexts. The Sweet32 attack (2016, CVE-2016-2183) used this against 3DES in TLS and recovered a secret cookie
+from 610 GB of captured traffic. NIST withdrew FIPS 46-3 on 19 May 2005. Its TDEA specification, SP 800-67, capped a key
+bundle at 2^20 blocks (8 MiB) in 2017 and was withdrawn on 1 January 2024, which "signifies that TDEA is no longer an
+approved block cipher"; decrypting data that was protected earlier is still allowed. SP 800-131A (Revision 2, 2019) had
+already disallowed two-key TDEA encryption and, after 2023, three-key TDEA encryption.
+
+Four things to know when using it:
+
+- **It is a block cipher, not an encryption scheme.** `encrypt_block` encrypts 8 bytes. Calling it on every block of a
+  message independently (ECB) is not safe, because equal plaintext blocks give equal ciphertext blocks and the structure
+  of the message shows through. Nor is anything authenticated: a ciphertext that has been altered decrypts to something
+  else, without any error. With a block this short, the mode and the amount of data under one key matter more than they
+  do for AES. This crate does not have modes yet.
+- **The table lookups are indexed by secrets.** No CPU this crate targets has a DES instruction, so there is no backend
+  without them: the rounds look up table entries at positions given by the state, and how long a lookup takes depends on
+  whether the CPU has that part of the table cached. That is the same kind of leak as the AES scalar backend, see the
+  Security part of [AES](#aes), though the tables here are small (2 KiB in all), which makes the signal coarser, not
+  absent. The key schedule only shifts and masks. It is a real difference from the SHA-2 functions, whose work and memory
+  accesses never depend on the message.
+- **Keys stay in memory for as long as the cipher does.** The round keys are overwritten with zeros when the cipher is
+  dropped, and `Debug` does not print them. That is best effort: copies the compiler made on the stack while a key was
+  expanded or a block processed are not reachable from here, and neither is the copy that moving a cipher (into a `Box`
+  or a `Vec`, say) can leave behind where it was. Where that matters, build the cipher where it will stay.
+- **The last bit of every key byte is ignored, and every key is accepted.** The standard sets those eight bits to give
+  each byte an odd number of ones and the algorithm does not use them, so two keys that differ only in them are the same
+  key; nothing checks the parity. DES also has four weak keys, which are their own inverse, and twelve semi-weak ones, in
+  pairs that undo each other. They are accepted like any other, and a random key is one of them with a probability near
+  2^-52. Keying option 3 of TDEA is single DES with a longer key, and `TripleDes` builds it if it is given such a bundle.
+
+### Testing
+
+```sh
+cargo test des::   # known-answer vectors, and a comparison with a literal implementation of the standard
+```
+
+The known-answer tests include the ECB example of FIPS 81 (the text "Now is the time for all " under the key
+`0123456789abcdef`), the first entries of NIST's variable-plaintext and variable-key tests (the `TECBvartext` and
+`TECBvarkey` files of its validation program), and vectors for the three TDEA keying options. Those have only a
+handful of keys, so two further sets come from OpenSSL and Go's standard library, which agree with each other, for DES
+and for TDEA: a thousand encryptions in a row, each on the previous ciphertext, and a thousand different keys, which is
+what exercises the key schedule.
+
+DES has one implementation, so there is no backend to compare against. In its place, `matches_reference` checks the
+round keys and the blocks, in both directions, against a second DES written for the tests alone (`src/des/reference.rs`).
+That one is as slow and as literal as the text of FIPS 46-3: blocks are vectors of bits, every permutation is the
+standard's own table, and none of the shortcuts of the real one is taken. The real one never forms `IP`, `IP^-1` or `E`: they
+are folded into rotations, five exchanges of bit pairs and the lookup tables, which is why it needs a check that known
+answers alone do not give.
+`triple_des_is_three_des` checks the single-block TDEA path, which skips the permutations between its stages, against
+three DES operations in a row, for each keying option.
+
+### Benchmarking
+
+```sh
+# cryptors: one test thread, so the benchmarks don't compete with each other for the CPU.
+cargo test --release des:: -- --ignored --nocapture --test-threads=1
+cd bench/descmp && go test -v                        # Go's crypto/des, which has no assembly and so no purego run
+```
+
+Both sides encrypt (or decrypt) 32 MiB in place, as independent 8-byte blocks with one call per block: ECB with no mode
+on top. Each takes the best of five passes after a warm-up pass. They start from the same bytes and print the first
+block after the passes; the two implementations print the same, which is a cross-check of its own.
+
+On an Apple M1 Pro, against Go's `crypto` package on the same machine (medians of five interleaved runs, in MiB/s):
+
+| Workload | cryptors | Go stdlib |
+|----------|----------|-----------|
+| DES encrypt | **110.3** | 96.6 |
+| DES decrypt | **110.3** | 96.3 |
+| TDEA encrypt | **36.6** | 33.8 |
+| TDEA decrypt | **36.5** | 33.9 |
+
+Decrypting runs at the speed of encrypting, as the same rounds are used with the keys in the opposite order, and TDEA
+at a third of DES, as it is 48 rounds against 16. Skipping the four permutations between the stages of TDEA is worth
+1.22x: three separate DES operations in a row, on the same keys, run at 30.2 MiB/s against 36.9 (one run of three).
+
+The two are close because they are built the same way. Go's `crypto/des` also merges the S-boxes and `P` into tables of
+64 words, takes the six-bit groups out of two rotations of the half-block, and does its TDEA with one initial and one
+final permutation. Ours is 1.14x faster for DES and 1.08x for TDEA. Building a cipher is faster too, though not
+measured with the same care (one run of three, with one block encrypted): about 0.5 µs for DES and 1.7 µs for TDEA,
+against 0.9 and 2.3 µs.
+
+What limits both is the chain of rounds. Each round waits on the one before it, so a call that encrypts a single block
+leaves most of the CPU idle. An experiment that is not in the crate, running 2, 3, 4 and 8 independent blocks side by
+side through the same code, reached 181, 236, 278 and 332 MiB/s for DES (one run), 1.6x to 3.0x the figure above, with
+the same output. Getting there needs an interface that takes many blocks at once, which `BlockCipher` does not have, and
+modes in which the blocks are independent (ECB, CTR, decrypting CBC); CBC encryption, where each block waits for the one
+before it, would not gain.
+
+No x86 figures are given yet, for the same reason as the others: nothing here can time real x86 hardware. The manual
+`Benchmarks` workflow (`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
+
+## ECDH
+
+ECDH, Elliptic Curve Diffie-Hellman, lets two parties who share no secret agree on one over a channel that anyone can
+read. Each makes a key pair, sends the public half to the other, and combines its own private half with the one it
+received; both arrive at the same bytes, and someone who saw only the public keys cannot. It is how TLS 1.3, among
+others, establishes the keys that the rest of a session is encrypted with. It is neither a hash nor a cipher, so it
+implements neither `Digest` nor `BlockCipher`: a key pair is a type of its own, generic over the curve, and the curve
+is one of four types that implement the sealed trait `Curve`.
+
+| Curve | Type | Private key | Public key | Shared secret | Defined in |
+|-------|------|-------------|------------|---------------|------------|
+| NIST P-256 | `P256` | 32 bytes | 65 bytes | 32 bytes | [NIST SP 800-186](https://csrc.nist.gov/pubs/sp/800/186/final), [SEC 1](https://www.secg.org/sec1-v2.pdf) |
+| NIST P-384 | `P384` | 48 bytes | 97 bytes | 48 bytes | the same |
+| NIST P-521 | `P521` | 66 bytes | 133 bytes | 66 bytes | the same |
+| Curve25519 | `X25519` | 32 bytes | 32 bytes | 32 bytes | [RFC 7748](https://www.rfc-editor.org/info/rfc7748) |
+
+On the NIST curves a public key is an uncompressed point, the byte `0x04` and the two coordinates (SEC 1, section 2.3.3),
+and the shared secret is the x-coordinate of the shared point (SEC 1, section 3.3.1; NIST SP 800-56A Rev. 3, section
+5.7.1.2). A key from the network is validated when it is turned into a `PublicKey`: coordinates below the prime, point
+on the curve, no point at infinity, no compressed form. X25519 takes any 32 bytes as a public key, as RFC 7748 asks, and
+the one thing it refuses is the all-zero secret that a peer's point of small order would force. P-224 is not here: the
+curves a Go program can use with `crypto/ecdh` are these four, and the general-purpose curve package on the list above is
+a separate item.
+
+The keys are generic over the curve, so a private key of one curve takes only a public key of the same curve and mixing
+them is a compile error, where a library that picks the curve at run time can only return an error. Key generation takes
+any `std::io::Read` as its source of randomness, because the standard library has no secure random source that is stable
+and the `Rand` item above is still planned.
+
+### Usage
+
+```rust
+use cryptors::ecdh::{P256, PrivateKey, PublicKey, X25519};
+
+fn unhex(s: &str) -> Vec<u8> {
+    (0..s.len() / 2).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap()).collect()
+}
+
+// RFC 7748, section 6.1: Alice and Bob each make a key from 32 bytes...
+let alice = PrivateKey::<X25519>::from_bytes(&unhex(
+    "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a",
+)).unwrap();
+let bob = PrivateKey::<X25519>::from_bytes(&unhex(
+    "5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb",
+)).unwrap();
+assert_eq!(
+    alice.public_key().as_bytes(),
+    unhex("8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a")
+);
+
+// ...send each other the public half, as bytes (this is where a bad key is refused)...
+let bobs_public = PublicKey::<X25519>::from_bytes(bob.public_key().as_bytes()).unwrap();
+
+// ...and both arrive at the same secret.
+let from_alice = alice.diffie_hellman(&bobs_public).unwrap();
+let from_bob = bob.diffie_hellman(alice.public_key()).unwrap();
+assert_eq!(from_alice, from_bob);
+assert_eq!(
+    from_alice.as_bytes(),
+    unhex("4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742")
+);
+
+// The NIST curves work the same way. A vector from NIST's CAVS for P-256: a private key, the other side's
+// public key as it arrives on the wire (an uncompressed point), and the secret both get.
+let private = PrivateKey::<P256>::from_bytes(&unhex(
+    "7d7dc5f71eb29ddaf80d6214632eeae03d9058af1fb6d22ed80badb62bc1a534",
+)).unwrap();
+let peer = PublicKey::<P256>::from_bytes(&unhex(concat!(
+    "04700c48f77f56584c5cc632ca65640db91b6bacce3a4df6b42ce7cc838833d287",
+    "db71e509e3fd9b060ddb20ba5c51dcc5948d46fbf640dfe0441782cab85fa4ac",
+))).unwrap();
+assert_eq!(
+    private.diffie_hellman(&peer).unwrap().as_bytes(),
+    unhex("46fc62106420ff012e54a434fbdd2d25ccc5852060561e68040dd7778997bd7b")
+);
+
+// A point that is not on the curve is refused when the key is built.
+let mut off_the_curve = peer.as_bytes().to_vec();
+off_the_curve[64] ^= 1;
+assert!(PublicKey::<P256>::from_bytes(&off_the_curve).is_err());
+```
+
+Real keys come from `PrivateKey::generate`, given a source of secure random bytes of your own:
+
+```rust
+use cryptors::ecdh::{P384, PrivateKey};
+use std::fs::File;
+
+let mut rng = File::open("/dev/urandom")?;                 // on Unix; any io::Read of random bytes will do
+let key = PrivateKey::<P384>::generate(&mut rng)?;
+// Send key.public_key().as_bytes() to the other side.
+```
+
+`examples/ecdh.rs` runs a complete exchange on each of the four curves, between two parties that each generate a key:
+`cargo run --release --example ecdh`.
+
+### Security
+
+None of the four curves is broken. The best known attacks on the NIST curves take about the square root of the size of
+the group, which NIST rates (SP 800-57) at 128, 192 and 256 bits of security for P-256, P-384 and P-521. RFC 7748 puts
+Curve25519 "slightly under the standard 128-bit level". A large quantum computer would break all four, by Shor's
+algorithm, and a key exchange that has to outlast one needs a post-quantum scheme such as ML-KEM, which is also on the
+list above, alongside or instead.
+
+Six things to know when using it:
+
+- **The shared secret is not a key.** It is one coordinate of a point, and both sides, and anyone who gets it from either
+  of them, see exactly the same bytes. Run it through a key derivation function, and include both public keys in what
+  that hashes, as RFC 7748 (section 6.1) describes and its section 7 explains the need for, before using any of it as a
+  key. HKDF is on the list above and not yet here.
+- **Nothing is authenticated.** ECDH gives two parties a secret in common; it does not say who they are. Someone between
+  them can play each against the other and end up with a secret shared with both, so a protocol has to bind the keys to
+  an identity (signatures, certificates, a pre-shared secret). Use a fresh key pair for each exchange where you can: a key
+  that is reused makes every exchange with it a target for an attack on that one key.
+- **A public key is validated, and that is the point.** On the NIST curves, a point that is not on the curve lets an
+  attacker who chooses it learn the private key a little at a time, one exchange after another (an invalid-curve attack).
+  `PublicKey::from_bytes` is where that is refused, so a `PublicKey` is always a valid one, and `diffie_hellman` needs no
+  further check. X25519 has no such attack on its `u` coordinate, but a few points have small order and force the secret
+  to all zeros; `diffie_hellman` returns `Error::LowOrderPoint` for them, which RFC 7748 allows.
+- **The randomness is the caller's.** `generate` is only as good as the reader it is given. A predictable one makes every
+  key it produced guessable.
+- **The arithmetic is written not to depend on secrets, and that is checked in one way only.** No branch condition or
+  memory address is derived from a private key: the scalar goes through a table lookup that reads every entry, a
+  conditional swap done with masks, and formulas that are complete, so they have no special cases to branch on. The
+  masks go through `core::hint::black_box`, because a compiler may turn a mask back into a jump, and `black_box` is a
+  request, not a guarantee. What backs the claim is the assembly `rustc` produced for `aarch64` and `x86_64`, which was
+  inspected: the conditional jumps in the code that handles a secret are loops over a public number of limbs, windows or
+  bits of the exponent that inverts a number, checks of public lengths, and two checks of a result (whether the shared
+  point is the point at infinity, which for a valid key it never is, and whether an X25519 secret is all zeros, which
+  the peer's point decides whatever our key is). That is one compiler's output for two targets, with no timing
+  measurement on real hardware behind it, and nothing protects against attacks that read power consumption or inject
+  faults.
+- **Keys stay in memory for as long as they exist.** A private key and a shared secret are overwritten with zeros when
+  dropped, and `Debug` does not print them. That is best effort: the working values of the arithmetic (numbers that depend
+  on a key, on the stack and in registers while it is in use) are not overwritten, and neither is the copy that moving a
+  key (into a `Box` or a `Vec`, say) can leave
+  behind where it was.
+
+### Testing
+
+```sh
+cargo test ecdh::   # known answers, Wycheproof, chained exchanges against OpenSSL, and the arithmetic against references
+```
+
+The known-answer tests include the vectors of NIST's CAVS for the three curves (the ones Go's tests use) and those of
+RFC 7748: the function itself (section 5.2), including the thousand-step chain, and the exchange of section 6.1. The
+rest of the confidence comes from three other kinds of test:
+
+- **Project Wycheproof.** The four of its ECDH files that take points as raw bytes (`ecdh_secp256r1_ecpoint_test.json`,
+  the same for 384 and 521, and `x25519_test.json`) hold 2,324 cases for these curves: points that are not on the curve (the
+  invalid-curve attack), points of other curves, compressed and malformed encodings, the points of small order of
+  X25519, non-canonical encodings and points on its twist, private keys with unusual bit patterns, public keys that hit
+  an edge case such as a zero coordinate when doubled, shared secrets that are special cases, and a regression for a bug
+  that Go's own P-256 once had on amd64 (CVE-2017-8932). All of them were run once and passed. 273 are in the tests:
+  every NIST case that is invalid or only acceptable, every X25519 case whose public key is of small order, not reduced,
+  of a special form or small, the one with a zero secret on each NIST curve, and samples of the rest.
+- **Chained exchanges.** Rounds of two derived keys exchanging with each other, each round seeded by the hash of the
+  last, for 16 rounds on each curve: some hundreds of thousands of field multiplications per curve, so a wrong carry in
+  one of them changes everything after it. The final values come from OpenSSL, and `bench/ecdhcmp` recomputes them with Go's
+  `crypto/ecdh`; the three agree.
+- **Differential tests.** The five-limb field of X25519 is compared with the generic field of the NIST curves on
+  pseudo-random inputs and on limbs at the largest values its bounds allow, and a whole ladder is compared with the same
+  ladder on the generic field. The table of multiples of the generator is compared with the generic multiplication, and
+  the curve constants with the relations that define them (the generator is on the curve; the order times the generator
+  is the point at infinity).
+
+The tests also cover the other behaviour of the API: what `generate` does with a reader that gives a zero, the order or a
+too-big number (it draws again, and after 64 candidates in a row that are not keys it reports an error), that the
+smallest and largest private keys and the point with x = 0 are accepted, that P-521 masks the seven unused bits of its first byte, that a failing reader is
+reported, that `Debug` shows no secret, and that a key and a shared secret leave nothing behind after they are dropped.
+
+### Benchmarking
+
+```sh
+# cryptors: one test thread, so the benchmarks don't compete with each other for the CPU.
+cargo test --release ecdh:: -- --ignored --nocapture --test-threads=1
+cd bench/ecdhcmp && go test -v                       # Go's crypto/ecdh as shipped, with its assembly
+cd bench/ecdhcmp && go test -tags purego -v          # Go's portable code, with no assembly
+```
+
+Both sides time the four operations of one side of a handshake, on the same keys: building a private key from its bytes
+(which derives the public key: a multiplication of the generator), building a public key from its bytes (which checks
+that the point is on the curve), the exchange itself (a multiplication of the peer's point), and the three in a row.
+Each runs for about 50 ms to size a batch of about 100 ms, and the best of five batches is reported. Key generation
+itself is not timed, so the cost of the random source is on neither side. Both print the first 8 bytes of the shared
+secret, and all three runs print the same.
+
+On an Apple M1 Pro, against Go 1.27.1's `crypto/ecdh` on the same machine (medians of five interleaved runs, in
+microseconds per operation, lower is better):
+
+| Operation | cryptors | Go stdlib | Go portable (`purego`) |
+|-----------|----------|-----------|------------------------|
+| P-256 new private key | 31.8 | **11.1** | 26.2 |
+| P-256 ecdh | 113.3 | **41.3** | 110.4 |
+| P-256 handshake | 145.4 | **52.8** | 136.9 |
+| P-384 new private key | 103.6 | **102.0** | 102.1 |
+| P-384 ecdh | 392.0 | **332.4** | 332.4 |
+| P-384 handshake | 496.7 | **434.9** | 435.1 |
+| P-521 new private key | **261.6** | 269.8 | 269.8 |
+| P-521 ecdh | 1012.6 | **945.1** | 945.2 |
+| P-521 handshake | 1275.0 | **1216.2** | 1215.8 |
+| X25519 new private key | **30.5** | 35.5 | 35.6 |
+| X25519 ecdh | **30.6** | 35.5 | 35.5 |
+| X25519 handshake | **61.1** | 71.1 | 71.1 |
+
+Building a public key takes 0.1 to 0.5 µs for the NIST curves here and 0.2 to 0.9 µs in Go, and nothing for X25519, which
+has nothing to check. Run-to-run spread was within about 1% in every cell, but the machine was not idle (load average
+2 to 4, a desktop), so the last digit means little.
+
+Per curve:
+
+- **X25519 is 16% faster than Go's.** Go's X25519 has assembly for amd64 only, so on this machine the two are portable
+  code against portable code, and both use five limbs of 51 bits. The first version of ours used the field of the
+  NIST curves, which does not know about the shape of `2^255 - 19`, and took 79.6 µs for an exchange, about 2.2x Go's at the time; the
+  field of its own took that to 30.6.
+- **P-256: level with Go's portable code on the exchange, 21% behind on building a key, and 2.7x behind its assembly.**
+  Go has assembly for P-256 on arm64 (and on amd64, ppc64le and s390x). Nothing in this crate competes with that, and the
+  `purego` column is the fair one: 113.3 against 110.4 µs for the exchange, 31.8 against 26.2 for building a key.
+- **P-384 and P-521: 18% and 7% behind Go on the exchange, level or ahead on building a key.** Go has no assembly for
+  them. Both are the same kind of code, Montgomery multiplication on 64-bit limbs, so the difference is in the
+  details. Two things that were measured and are not the cause: the `black_box` on the masks (removing it changes the NIST
+  curves by 1% or less, and by 6% in the generic field that X25519 started with), and loops that LLVM does not unroll in
+  the 6- and 9-limb multiplications (raising its unroll threshold so that it does makes P-384 and P-521 4–5% faster, and
+  P-256 not at all).
+  The first key of a curve in a process also builds the table of multiples of the generator, once: in a fresh process,
+  about 0.5 ms more for P-256, 1.7 ms for P-384 and 4 ms for P-521 (medians of seven; a busy machine took up to twice
+  that), kept afterwards (90, 200 and 420 KiB). The figures above leave that out.
+
+What would make the NIST curves faster, none of it done: a squaring that uses the symmetry of a product (about a fifth
+of the multiplications of a squaring), a reduction written for the shape of each prime (P-521's `2^521 - 1` reduces by
+shifts and additions, with no Montgomery step at all), signed windows (half the table), and, on x86-64, a backend for
+BMI2 and ADX behind a run-time check, which is what the fastest x86 big-number code relies on. Nothing here can run that
+one to see what it would gain.
+
+No x86 figures are given yet, for the same reason as the others: nothing here can time real x86 hardware, and Rosetta 2
+translates the instructions, so its timings say nothing about an x86 CPU. The manual `Benchmarks` workflow
+(`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
 
 ## MD5
 

@@ -45,6 +45,8 @@ src/
   digest.rs       the `Digest` trait shared by every fixed-output hash
   block_cipher.rs the `BlockCipher` trait shared by every block cipher
   aes/            one directory per algorithm
+  des/            DES and Triple DES: a block cipher with one implementation, `scalar`
+  ecdh/           key agreement over P-256, P-384, P-521 and X25519: keys generic over the curve
   md5/
   sha1/
   sha2/           a family of functions: one directory per word size
@@ -52,6 +54,7 @@ src/
     sha256/         SHA-224 and SHA-256
     sha512/         SHA-384, SHA-512, SHA-512/224 and SHA-512/256
   sha3/
+  wipe.rs         overwrites a secret with zeros, in a way the compiler may not remove
 bench/
   <name>cmp/      the Go standard-library counterpart of one algorithm
 ```
@@ -69,7 +72,25 @@ Inside an algorithm's directory (`src/sha1/` is a compact example,
 A block cipher has `cipher.rs` where a hash has `digest.rs`: the public types, the
 runtime backend dispatcher and the unit tests. It also has `schedule.rs`, the key
 schedule that every backend shares (only the S-box and the inverse MixColumns differ
-between them, and are passed in). `src/aes/` is the example.
+between them, and are passed in). `src/aes/` is the example. A cipher with only a
+portable implementation, like `src/des/` (no CPU has a DES instruction), keeps the
+same shape: `schedule.rs`, `scalar.rs` and `cipher.rs`, plus `tables.rs` for the
+constants of the standard and, for the tests only, `reference.rs`.
+
+A key agreement, `src/ecdh/`, has neither shape. There is no backend to select, because no x86 or Arm CPU has an
+instruction for elliptic curves, and no trait shared with the other algorithms: the keys are generic over a sealed `Curve` trait, and
+the four curves are the only types that implement it. Its files, from the API down:
+
+| File | Holds |
+|------|-------|
+| `mod.rs` | The documentation, the `mod` declarations and the `pub use` of the keys, the curves and the error. |
+| `curve.rs` | `Curve`, the public half of the trait (the names and sizes), the private half it requires, which does the work on byte strings, and `Error`. |
+| `keypair.rs` | `PrivateKey`, `PublicKey`, `SharedSecret`, and the tests of the API: known answers, Wycheproof, invalid keys, `generate`, the chained exchanges, wiping, `Debug` and the `#[ignore]`d `throughput`. |
+| `nist.rs`, `x25519.rs` | One curve family each: the types, their constants and their implementation of the private half of `Curve`. |
+| `weierstrass.rs`, `field.rs` | The group law of the three NIST curves, and the arithmetic modulo a prime that it and the curves use (Montgomery form, any number of limbs). |
+| `fe25519.rs` | The field of X25519, in five limbs of 51 bits. |
+| `ct.rs` | The comparisons and selections that do not branch. Anything that depends on a secret goes through these. |
+| `vectors.rs` | Test data only (`#[cfg(test)]`): known answers, the Wycheproof selection and the chained exchanges' results. |
 
 The backend modules are private: users see `cryptors::sha2::Sha256`, never the
 path through `sha256`. When several functions share one algorithm, as the six
@@ -80,15 +101,20 @@ BMI1/BMI2 check).
 
 The fixed-output hashes (MD5, SHA-1, SHA-2) are unit types that implement
 `Digest`. SHA-3 has not been converted yet and exposes free functions, as its
-extendable-output functions do not fit the trait. The block ciphers (AES) implement
+extendable-output functions do not fit the trait. The block ciphers (AES, DES) implement
 `BlockCipher` instead, and are not unit types: a cipher holds the key schedule it
-was built with.
+was built with. ECDH implements neither: its curves are unit types, but they only
+name the curve that a `PrivateKey<C>` or a `PublicKey<C>` belongs to.
 
 Each algorithm in `bench/` is its own Go module with a throughput test that
-mirrors the Rust one (same buffer, warm-up and best-of-5 method). The AES, SHA-2
+mirrors the Rust one (same buffer, warm-up and best-of-5 method). The AES, ECDH, SHA-2
 and SHA-3 ones also split into `impl_asm_test.go` and `impl_purego_test.go`, so that
 `-tags purego` selects Go's portable code, the counterpart of our `scalar`
-backend. `make bench-go` runs them all, and so does the manual `Benchmarks`
+backend (of our one implementation, for ECDH). (`descmp` does not split: Go's
+`crypto/des` is portable code on every platform, so it has one run.) The ECDH
+one also checks its inputs, with the NIST and RFC 7748 vectors and with the
+chained exchanges of `src/ecdh/keypair.rs`, so a broken build fails instead of
+passing as a figure. `make bench-go` runs them all, and so does the manual `Benchmarks`
 workflow (`.github/workflows/bench.yml`) on GitHub's x86-64 and Arm runners.
 
 ## Adding or implementing an algorithm
@@ -156,6 +182,23 @@ boundaries: `known_answers` (the standards' examples), `chained` and `many_keys`
 keys), `scalar_known_answers`, `matches_scalar_backend` (which also compares the
 round keys), `unaligned_input` (which moves the round keys as well as the block),
 `dropping_wipes_the_round_keys`, `debug_hides_the_key` and `throughput`.
+
+ECDH's tests are `known_answers` (the standards' vectors, for each curve), `wycheproof` (the selection of Project
+Wycheproof's cases in `vectors.rs`), `rejects_invalid_private_keys` and `rejects_invalid_public_keys`,
+`x25519_refuses_points_of_small_order`, `edge_scalars_are_keys`, `a_zero_x_coordinate_is_not_special_on_the_nist_curves`,
+`chained_exchanges` (rounds of exchanges between derived keys, with values from OpenSSL, which `bench/ecdhcmp`
+recomputes in Go), the `generate_*` tests with a scripted reader, `encoding_lengths`, `equality_and_cloning`,
+`dropping_wipes_the_secrets`, `debug_hides_the_secrets`, `curve::tests::errors_say_what_went_wrong` and `throughput`. Under it, each layer checks itself against
+something that does not share its code: `field.rs` against integers computed in Python and, for one limb, `u128`;
+`nist.rs` against the relations that define a curve and against the generic multiplication (the table of multiples of
+the generator); `fe25519.rs` and the X25519 ladder against the generic field and the ladder written on it.
+
+A cipher with a single implementation has no backend to compare, so `src/des/` swaps
+`scalar_known_answers`, `matches_scalar_backend` and `unaligned_input` for
+`matches_reference`: a second DES, written for the tests only in `reference.rs`, as
+literally as the text of the standard, against which the round keys and the blocks of
+the real one are compared. It adds `triple_des_is_three_des` (the single-block path of
+TDEA against three DES operations in a row) and `parity_bits_are_ignored`.
 
 Where an algorithm has no externally generated boundary vectors (MD5 and SHA-1
 do not yet), a second, independently written padding routine stands in for
