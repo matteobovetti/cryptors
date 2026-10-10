@@ -50,6 +50,7 @@ src/
   ec/             the arithmetic of the NIST curves that ECDH and ECDSA share (private; they re-export its curve types)
   ecdh/           key agreement over P-256, P-384, P-521 and X25519: keys generic over the curve
   ecdsa/          signatures over P-224, P-256, P-384 and P-521: keys and signatures generic over the curve
+  hkdf/           key derivation over any hash that implements `Digest`: one type generic over the hash, no backend
   hmac/           message authentication over any `Digest`: no backends of its own, it runs on the hash's
   md5/
   sha1/
@@ -135,6 +136,15 @@ already has, so a message in pieces goes through the same backend as a whole one
 reaches it through `Digest::INCREMENTAL`, a hidden constant that the crate's hashes set and that is `None` for a hash
 implemented elsewhere; the interface is not public, so it can change without breaking anyone.
 
+A key derivation function, `src/hkdf/`, has less in it. There is no backend, because the work is in the hash, which picks
+its own, and no trait, because `Hkdf<D>` is generic over `Digest`. Its files:
+
+| File | Holds |
+|------|-------|
+| `mod.rs` | The documentation, the `mod` declarations and the `pub use` of `Hkdf` and `Error`. |
+| `kdf.rs` | `Hkdf` (Extract, Expand, `derive`, `from_prk`) and `Error`, and the tests: RFC 5869, the vectors from Go and OpenSSL, the limits, `Debug` and the `#[ignore]`d `throughput`. |
+| `hmac.rs` | A private stand-in for the crate's HMAC until that module lands: `Keyed`, with the `new` and `mac_parts` of `crate::hmac::Hmac`, so that switching is deleting this file and changing one `use`. |
+
 The backend modules are private: users see `cryptors::sha2::Sha256`, never the
 path through `sha256`. When several functions share one algorithm, as the six
 SHA-2 functions share two, they share a directory. Each word size then has the
@@ -149,7 +159,8 @@ extendable-output functions do not fit the trait. The block ciphers (AES, DES) i
 was built with. ECDH and ECDSA implement neither: their curves are unit types, but they only
 name the curve that a `PrivateKey<C>`, a `PublicKey<C>` or a `Signature<C>` belongs to. ECDSA takes the hash as
 a type parameter, `D: Digest`, of the functions that sign and verify a message. HMAC is generic over `Digest` rather
-than implementing it: an `Hmac<D>` holds the two hash states it computed from its key.
+than implementing it: an `Hmac<D>` holds the two hash states it computed from its key. HKDF takes the hash as a type
+parameter of its one type, `Hkdf<D: Digest>`, which holds the pseudorandom key it was built with.
 
 Each algorithm in `bench/` is its own Go module with a throughput test that
 mirrors the Rust one (same buffer, warm-up and best-of-5 method). The AES, ECDH, ECDSA, SHA-2
@@ -162,7 +173,8 @@ chained exchanges of `src/ecdh/keypair.rs`, so a broken build fails instead of
 passing as a figure, and the ECDSA one does the same with the signatures of
 RFC 6979, the chained signatures of `src/ecdsa/keypair.rs` and the randomized
 signatures of `src/ecdsa/vectors.rs`, which Go made. (`hmaccmp` does not split either: it measures the hashes, whose
-own modules time Go's portable code; it checks a known answer for each hash before it times anything.) `make bench-go` runs them all, and so does the manual `Benchmarks`
+own modules time Go's portable code; it checks a known answer for each hash before it times anything.) The HKDF one checks
+RFC 5869 A.1 and the longest outputs that `longest_output` in `src/hkdf/kdf.rs` expects. `make bench-go` runs them all, and so does the manual `Benchmarks`
 workflow (`.github/workflows/bench.yml`) on GitHub's x86-64 and Arm runners.
 
 ## Adding or implementing an algorithm
@@ -267,6 +279,12 @@ both sides of the inner hash's padding boundary), `truncated_tags`, `verify_acce
 `long_message_in_uneven_pieces`, `a_clone_carries_on_from_the_same_point`) and checks `dropping_wipes_the_state`;
 `wipe::tests::wipe_bytes_zeroes_every_byte` checks the bulk wipe both use. `cargo test -- hmac:: incremental::` runs
 them all.
+
+HKDF's tests are `rfc_5869` (the seven cases of Appendix A, through every function of the API), `salt_lengths` and
+`prk_lengths` (salts and PRKs of HashLen, one block and one byte more, where HMAC starts hashing its key), `longest_output`
+(255 blocks, one byte more refused, and shorter outputs as its prefixes) and `long_inputs`, all four with vectors from Go
+and OpenSSL for all eight hashes, then `lengths_of_inputs` (an empty salt, a short PRK), `debug_hides_the_prk` and
+`throughput`. There is no wiping test: the key is on the heap, in the stand-in HMAC, and cannot be read once freed.
 
 A cipher with a single implementation has no backend to compare, so `src/des/` swaps
 `scalar_known_answers`, `matches_scalar_backend` and `unaligned_input` for
