@@ -27,7 +27,7 @@ This library supports the following algorithms and packages:
 | ECDSA | [FIPS 186-5](https://csrc.nist.gov/pubs/fips/186-5/final) and [RFC 6979](https://www.rfc-editor.org/info/rfc6979): Elliptic Curve Digital Signature Algorithm over P-224, P-256, P-384 and P-521, randomized and deterministic | Implemented |
 | Ed25519 | Ed25519 signature algorithm | Planned |
 | HKDF | RFC 5869: HMAC-based Extract-and-Expand Key Derivation Function | Planned |
-| HMAC | FIPS 198: Keyed-Hash Message Authentication Code | Planned |
+| HMAC | [FIPS 198-1](https://csrc.nist.gov/pubs/fips/198-1/final) and [RFC 2104](https://www.rfc-editor.org/info/rfc2104): Keyed-Hash Message Authentication Code, over MD5, SHA-1 and the six SHA-2 functions | Implemented |
 | HPKE | RFC 9180: Hybrid Public Key Encryption | Planned |
 | MD5 | [RFC 1321](https://www.rfc-editor.org/info/rfc1321): The MD5 Message-Digest Algorithm | Implemented |
 | ML-DSA | FIPS 204: post-quantum ML-DSA signature scheme | Planned |
@@ -198,10 +198,12 @@ available.
 There are two other uses. One is an empty block of inline assembly in SHA-256's two aarch64 backends, scalar and
 FEAT_SHA256. It emits no instruction, touches no memory, and only stops the compiler from rearranging equivalent
 arithmetic into a slower order (`src/sha2/sha256/scalar.rs` and `src/sha2/sha256/aarch64.rs`). The other is the
-volatile write that overwrites an AES or DES cipher's round keys, or an ECDH or ECDSA private key or ECDH shared secret,
-with zeros when it is dropped, which the compiler would otherwise delete as a store nobody reads (`src/aes/schedule.rs`,
-`src/des/schedule.rs` and, for ECDH and ECDSA, `src/wipe.rs`). Outside its tests, neither ECDH nor ECDSA has intrinsics
-or anything else that is `unsafe`.
+volatile write that overwrites an AES or DES cipher's round keys, an ECDH or ECDSA private key or ECDH shared secret, or
+the hash states of an HMAC key, with zeros when it is dropped, which the compiler would otherwise delete as a store
+nobody reads (`src/aes/schedule.rs`, `src/des/schedule.rs` and, for ECDH, ECDSA and HMAC, `src/wipe.rs`). For the
+states of HMAC, which are a few hundred bytes and wiped twice for every tag, `src/wipe.rs` views the bytes as 16-byte
+words where they are aligned for it (`align_to_mut`), so that a wipe is one store per 16 bytes instead of one per byte.
+Outside its tests, none of ECDH, ECDSA and HMAC has intrinsics or anything else that is `unsafe`.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -228,6 +230,10 @@ cryptors
 │   │   Signature
 │   ├── P224, P256, P384, P521       the curves, which implement the sealed trait `Curve` (ecdh has three of these types)
 │   └── Error
+├── hmac                             message authentication: built on a hash, so generic over any `Digest`
+│   ├── Hmac<D>                      keyed once, with the hash's states after the padded key
+│   ├── hmac                         the one-call form
+│   └── VerifyError
 ├── md5
 │   └── Md5
 ├── sha1
@@ -251,7 +257,7 @@ The SHA-2 functions are all imported from `sha2`, as in `cryptors::sha2::Sha256`
 
 MD5, SHA-1 and the six SHA-2 functions (SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224 and SHA-512/256) are
 zero-sized types that implement one trait, `cryptors::Digest`. Bring it into scope to call them, or take
-`D: Digest` to be generic over the hash (HMAC, HKDF and PBKDF2 will do exactly that):
+`D: Digest` to be generic over the hash (HMAC does exactly that, and HKDF and PBKDF2 will):
 
 ```rust
 use cryptors::{Digest, md5::Md5, sha1::Sha1, sha2::{Sha256, Sha512}, sha3};
@@ -295,6 +301,12 @@ caller's, and the generator of the per-message secret number is built on it), so
 `key.sign::<Sha256, _>(&mut rng, message)` takes any `D: Digest`, and `public.verify::<Sha256>(message, &signature)` has
 to name the same one. The keys and the `Signature<C>` are generic over the curve, as in ECDH. See [ECDSA](#ecdsa).
 
+Message authentication is built on a hash without being one. `Hmac<D>` takes any `D: Digest` and, like a cipher, is
+built from a key with `new`, which hashes the padded key once; `mac` then gives the tag of a message, and `verify`
+checks one without stopping at the first wrong byte. Inside the crate, the hashes can also take a message in pieces,
+which is what lets HMAC start every tag from the state it computed from the key, and hash a message from the caller's
+memory without copying it. See [HMAC](#hmac).
+
 ## AES
 
 AES, specified in [FIPS 197](https://csrc.nist.gov/pubs/fips/197/final), is a block cipher: a permutation of 128-bit
@@ -303,7 +315,7 @@ as the successor to DES, from the Rijndael design of Joan Daemen and Vincent Rij
 encryption in use today: TLS, disk and file encryption, Wi-Fi. It is built from rounds of a substitution, a row
 shuffle, a column mix and a key addition, and it is not a hash, so it does not implement `Digest`. It implements
 `BlockCipher`, which has the same shape (associated lengths and array types, static dispatch) but holds a key. The
-cipher modes on the list above will be generic over it, just as HMAC will be over `Digest`.
+cipher modes on the list above will be generic over it, just as [HMAC](#hmac) is over `Digest`.
 
 FIPS 197 defines three variants:
 
@@ -1100,6 +1112,239 @@ No x86 figures are given yet, for the same reason as the others: nothing here ca
 translates the instructions, so its timings say nothing about an x86 CPU. The manual `Benchmarks` workflow
 (`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
 
+## HMAC
+
+HMAC, the keyed-hash message authentication code, turns a hash function into a check that a message comes from someone
+who holds a secret key, and has not been changed on the way. The sender computes a short tag from the key and the
+message and sends it along; the receiver computes it again and compares. Without the key, nobody can produce the tag of
+a message they have not seen tagged. It is how TLS, IPsec, SSH and JSON Web Tokens (HS256) authenticate data with a
+hash, and the building block of HKDF and PBKDF2 (on the list above) and of the generator of ECDSA's per-message
+secrets. It is built on a hash but is not one, so it implements neither `Digest` nor `BlockCipher`: `Hmac<D>` is
+generic over the hash, for any `D: Digest`, and like a cipher it holds the key it was built with.
+
+| HMAC with | `D` | Block | Tag | Shortest truncated tag | Hash defined in | Test vectors |
+|-----------|-----|-------|-----|------------------------|-----------------|--------------|
+| MD5 | `Md5` | 64 bytes | 16 bytes | 10 bytes | [RFC 1321](https://www.rfc-editor.org/info/rfc1321) | [RFC 2202](https://www.rfc-editor.org/info/rfc2202) |
+| SHA-1 | `Sha1` | 64 bytes | 20 bytes | 10 bytes | [RFC 3174](https://www.rfc-editor.org/info/rfc3174) | [RFC 2202](https://www.rfc-editor.org/info/rfc2202) |
+| SHA-224 | `Sha224` | 64 bytes | 28 bytes | 14 bytes | [FIPS 180-4](https://csrc.nist.gov/pubs/fips/180-4/upd1/final) | [RFC 4231](https://www.rfc-editor.org/info/rfc4231) |
+| SHA-256 | `Sha256` | 64 bytes | 32 bytes | 16 bytes | the same | the same |
+| SHA-384 | `Sha384` | 128 bytes | 48 bytes | 24 bytes | the same | the same |
+| SHA-512 | `Sha512` | 128 bytes | 64 bytes | 32 bytes | the same | the same |
+| SHA-512/224 | `Sha512_224` | 128 bytes | 28 bytes | 14 bytes | the same | none published; Go and OpenSSL, which agree |
+| SHA-512/256 | `Sha512_256` | 128 bytes | 32 bytes | 16 bytes | the same | the same |
+
+HMAC itself is [FIPS 198-1](https://csrc.nist.gov/pubs/fips/198-1/final), which adopts
+[RFC 2104](https://www.rfc-editor.org/info/rfc2104): `HMAC(K, m) = H((K0 ^ opad) || H((K0 ^ ipad) || m))`, where `K0`
+is the key padded with zeros to a block (or the key's digest, padded, for a key longer than a block), and `ipad` and
+`opad` are the bytes `0x36` and `0x5c` repeated over a block. The outer hash is what `sha256(key || message)` lacks: it
+hides the inner result under a second form of the key, so the tag of one message gives no start on the tag of another,
+and length extension does not apply. SHA-3 does not implement `Digest` yet, so there is no HMAC-SHA3.
+
+A key can have any length, including zero. One longer than a block is hashed first, so it is worth no more than one of
+the tag's length, and RFC 2104 asks for at least that many random bytes. `Hmac::new` hashes the two padded keys once and
+keeps the state of the hash after each (FIPS 198-1, section 6), so every tag after that costs the hashing of the
+message and of the inner digest, and nothing more for the key. A tag is checked with `verify`, which takes only the full
+tag, or with `verify_truncated`, for protocols that send its leftmost bytes (section 5): it takes no fewer than the last
+column says, half the tag and at least 80 bits. Both compare every byte whatever they find, and neither accepts an empty
+tag.
+
+### Usage
+
+```rust
+use cryptors::{hmac::{self, Hmac, VerifyError}, sha2::{Sha256, Sha512}};
+
+// RFC 4231, test case 2. `new` hashes the padded key once; every tag reuses the result.
+let mac = Hmac::<Sha256>::new(b"Jefe");
+let tag: [u8; 32] = mac.mac(b"what do ya want for nothing?");
+assert_eq!(tag[..4], [0x5b, 0xdc, 0xc1, 0x46]);
+
+// The receiver checks the tag in constant time, never with `==`.
+assert_eq!(mac.verify(b"what do ya want for nothing?", &tag), Ok(()));
+assert_eq!(
+    mac.verify(b"what do ya want for everything?", &tag),
+    Err(VerifyError::Mismatch)
+);
+
+// A protocol that sends only the first 128 bits, like IPsec's HMAC-SHA-256-128, has its own check.
+assert_eq!(mac.verify_truncated(b"what do ya want for nothing?", &tag[..16]), Ok(()));
+
+// A message in several pieces has the tag of the pieces put together, and is never copied into one.
+assert_eq!(mac.mac_parts(&[b"what do ya ", b"want for nothing?"]), tag);
+
+// One call, for one message under a key.
+let tag: [u8; 64] = hmac::hmac::<Sha512>(b"Jefe", b"what do ya want for nothing?");
+assert_eq!(tag[..4], [0x16, 0x4b, 0x7a, 0x7b]);
+```
+
+A real key is random bytes from a source of your own, since the standard library has no secure one that is stable:
+
+```rust
+use cryptors::{hmac::Hmac, sha2::Sha256};
+use std::{fs::File, io::Read};
+
+let mut key = [0u8; 32];
+File::open("/dev/urandom")?.read_exact(&mut key)?;      // on Unix; any io::Read of random bytes will do
+let mac = Hmac::<Sha256>::new(&key);
+```
+
+`examples/hmac.rs` runs a sender and a receiver that share a random key over each of the eight hashes, including a
+forged tag and a changed message that are refused: `cargo run --release --example hmac`.
+
+### Security
+
+HMAC is not broken with any of these hashes. Its security rests on the compression function of the hash behaving like a
+keyed random function, not on collision resistance, so the collision attacks that broke MD5 and SHA-1 as hashes do not
+carry over, and no practical forgery of HMAC-MD5 or HMAC-SHA-1 is known. Neither belongs in a new design all the same:
+RFC 6151 says so for HMAC-MD5, MD5 has never been a NIST-approved hash, and NIST is retiring SHA-1 by the end of 2030.
+Use HMAC-SHA-256 or one of the 64-bit SHA-2 functions. A large quantum computer would not change this much: Grover's
+algorithm searches keys in about the square root of the steps, so a 256-bit key keeps about 128 bits.
+
+Five things to know when using it:
+
+- **Compare tags with `verify`, never with `==`.** `verify` goes through every byte of the tag whatever it finds, so
+  the time it takes does not show how many leading bytes of a forged tag were right; `==` stops at the first difference,
+  which is enough to forge a tag a byte at a time.
+- **The tag's length is the protocol's.** `verify` takes only a full-length tag. `verify_truncated` takes any length from
+  `Hmac::<D>::MIN_TAG_LEN` to the full tag: half the output, rounded up, and no fewer than 10 bytes, the two lower bounds
+  of RFC 2104 (section 5). That is more than NIST's floor of 32 bits (SP 800-107 Rev. 1, section 5.3.3), and takes in the
+  truncations protocols use, such as HMAC-SHA-256-128 in IPsec (RFC 4868) and HMAC-SHA1-80 in SRTP. Neither ever accepts
+  an empty tag. The length is not authenticated: the protocol has to fix it, and the caller has to hold the tag to it, or
+  a forger will send the shortest one accepted.
+- **Use a random key of at least the tag's length**, and not a password. A shorter key is weaker than HMAC can be, and a
+  key longer than a block is hashed down to the tag's length first. HMAC is fast by design, which is the wrong property
+  for a password; derive a key from one with a password-hashing construction such as PBKDF2, on the list above and not
+  yet here.
+- **Its timing is written not to depend on secrets, and that is checked in one way only.** What HMAC does with a key or
+  a message depends on their lengths and on nothing else: the hashes here have no table indexed by the data and no branch
+  on it, the padded keys are made with XORs, and the comparison ORs together the differences of every pair of bytes,
+  with one branch, on the result. The accumulator goes through `core::hint::black_box`, so that the compiler cannot
+  reason about it and stop at the first difference, which is a request, not a guarantee. What backs the claim is the
+  assembly `rustc` produced for `aarch64` and `x86_64`, which was inspected: the comparison's only conditional jumps are
+  its loop, over the public length of the tag, and the check of the lengths before it. That is one compiler's output for
+  two targets, with no timing measurement on real hardware behind it, and nothing protects against attacks that read
+  power consumption or inject faults. The lengths of the key, the message and a received tag are not hidden, and neither
+  is whether a tag was refused for its length or its contents; none of them is secret.
+- **The key stays in memory for as long as the `Hmac` does.** An `Hmac` holds the state of the hash after each padded
+  key, from either of which a forger could tag any message, so both are overwritten with zeros when it is dropped, and
+  `Debug` does not print them. So are the states each tag is computed in, and the block that holds the padded key while
+  `new` hashes it. That is best effort: the working values of the compression functions (on the stack and in registers
+  while a block is hashed), the digest of a key longer than a block, and the copy that moving an `Hmac` (into a `Box` or
+  a `Vec`, say) can leave behind where it was are not overwritten. Where that matters, build it where it will stay.
+
+### Testing
+
+```sh
+cargo test -- hmac:: incremental::   # the RFC vectors, vectors from Go and OpenSSL, verification, and the hashes in pieces
+```
+
+The known-answer tests are the seven test cases of RFC 4231 for HMAC-SHA-224, -256, -384 and -512, including the keys
+longer than a block and the 128-bit truncation, and the seven of RFC 2202 for HMAC-MD5 and HMAC-SHA-1, with its 96-bit
+truncations. Every vector goes through `hmac`, `Hmac::mac`, `mac_parts` and `verify`, and through the one-shot path that
+a hash from outside the crate takes, as well as the streaming one. The rest of the confidence comes from four other kinds
+of test:
+
+- **Vectors from Go and OpenSSL.** For each of the eight hashes, including SHA-512/224 and SHA-512/256, which no RFC
+  covers: the RFC 4231 inputs, the empty key and message, keys one byte shorter than a block, exactly a block and one
+  byte longer (which is hashed first), and messages on both sides of the inner hash's padding boundary, where the length
+  no longer fits in the last block. Go's `crypto/hmac` and OpenSSL 3.6 computed each of them, and agree.
+- **The hashes in pieces.** HMAC runs on an incremental form of each hash, which is internal to the crate. For all eight,
+  it has to give the one-shot digest for messages on both sides of every block and padding boundary up to two blocks,
+  split at every byte and fed one byte at a time, and for a 100,000-byte message in pieces of uneven sizes, so that a
+  hardware backend runs its main loop from the caller's slice. A copy of a state has to carry on as the original would.
+- **Verification.** Every bit of a tag is flipped, and every length from the empty tag to one byte too long is tried,
+  against both `verify` and `verify_truncated`; the shortest truncated tag of each hash is checked against the policy.
+- **Multi-part messages.** Split into two parts at every byte and into three at every pair of bytes, one part per byte,
+  and no parts at all, a message has the tag of the whole, on both paths.
+
+The tests also check that dropping an `Hmac`, or a hash state, leaves zeros where the key and the message were, and that
+`Debug` shows nothing of the key. Each test was checked by breaking, in a scratch copy, the code it guards (a pad byte,
+the rule for long keys, the comparison, the tag-length policy, the order of the parts, the buffering and the padding of
+the hashes in pieces, the wipes) and seeing it fail.
+
+### Benchmarking
+
+```sh
+# cryptors: one test thread, so the benchmarks don't compete with each other for the CPU.
+cargo test --release hmac:: -- --ignored --nocapture --test-threads=1
+cd bench/hmaccmp && go test -v                       # Go's crypto/hmac, on Go's hashes as shipped
+```
+
+Both sides time three workloads per hash, with the same 32-byte key and the same bytes: one 64 MiB message, next to the
+bare hash of the same bytes; 1,000,000 messages of 64 bytes under one key, next to the bare hash of each message; and
+the same messages with the key set afresh for each one (`hmac::hmac` here, `hmac.New` in Go), which hashes the padded
+key every time, as HKDF does on every call. Each takes the best of five passes after a warm-up pass. Both print the tag
+of the long message and the XOR of all the short messages' tags, and they print the same; the Go side also checks a
+known answer for each hash before it times anything.
+
+On an Apple M1 Pro, against Go 1.27.1's `crypto/hmac` on the same machine (medians of five interleaved runs; MiB/s for
+the long message and millions of tags per second for the short ones, higher is better). "One-shot hash" is this HMAC as
+it was before the hashes could take a message in pieces: it copied the padded key and the message into one buffer (on
+the stack when short) and hashed that with `digest`, which is what a hash from outside the crate still gets.
+
+| Workload | cryptors | Go stdlib | cryptors, one-shot hash | cryptors, hash alone | Go, hash alone |
+|----------|----------|-----------|-------------------------|----------------------|----------------|
+| HMAC-SHA-256, one 64 MiB message | **2341** | 2313 | 2100 | 2355 | 2324 |
+| HMAC-SHA-512, one 64 MiB message | **1396** | 1377 | 1283 | 1397 | 1377 |
+| HMAC-SHA-1, one 64 MiB message | 2202 | **2359** | 1986 | 2195 | 2365 |
+| HMAC-MD5, one 64 MiB message | 619 | **637** | 607 | 623 | 637 |
+| HMAC-SHA-256, 64-byte messages, keyed once | **9.99** | 7.47 | 7.47 | 20.6 | 12.1 |
+| HMAC-SHA-512, 64-byte messages, keyed once | **4.51** | 3.70 | 2.57 | 13.9 | 6.99 |
+| HMAC-SHA-1, 64-byte messages, keyed once | **10.22** | 7.46 | 7.04 | 18.7 | 12.7 |
+| HMAC-MD5, 64-byte messages, keyed once | **3.38** | 3.01 | 2.05 | 5.22 | 4.69 |
+| HMAC-SHA-256, 64-byte messages, keyed for each | **6.08** | 3.25 | 6.26 | | |
+| HMAC-SHA-512, 64-byte messages, keyed for each | **2.50** | 1.45 | 2.49 | | |
+| HMAC-SHA-1, 64-byte messages, keyed for each | **6.20** | 3.10 | 6.23 | | |
+| HMAC-MD5, 64-byte messages, keyed for each | **1.98** | 1.56 | 1.97 | | |
+
+Run-to-run spread was within about 5% in a cell, 7% in a few of Go's and 19% in one (Go's bare SHA-256 of the short
+messages), and the machine was not idle (a desktop, shared
+with other builds and benchmarks, though never two benchmarks at once; in one of the five rounds the shared lock that
+ensures that was released early, so that round may have overlapped other work), so differences of 2 or 3% are within
+the noise. The hashes' own one-shot speeds did not change with the incremental form they gained: each of the eight, on
+every backend this machine has, is within 0.4% of before (medians of five interleaved runs of their throughput tests).
+
+Per workload:
+
+- **One long message: HMAC runs at the speed of its hash.** The one-shot hash copied the 64 MiB message, with the
+  padded key in front of it, into a buffer of its own and wiped it afterwards, which cost 9% of the speed of the bare
+  hash with SHA-256, 8% with SHA-1, 6% with SHA-512 and 3% with MD5.
+  Now the message goes to the compression function from where it is, and HMAC is within the noise of the bare hash.
+  Go's `crypto/hmac` streams as well, so against Go this row compares the hashes: ahead with SHA-256 and SHA-512 by 1.2%
+  and 1.4%, behind with SHA-1 by 6.7% and with MD5 by 2.8%, which is where the bare SHA-1 and MD5 of this crate are
+  behind Go's (7.2% and 2.2%).
+- **Short messages under one key: 1.12-1.37x Go.** Both start every tag from the two states saved after the padded keys
+  (FIPS 198-1, section 6), so both run the same compression calls: three for a 64-byte message with a 64-byte block (the
+  message and its padding for the inner hash, the inner digest and its padding for the outer), two with SHA-512's
+  128-byte block. What differs is the rest of a call, and Go's costs more: its bare SHA-256 of one 64-byte message runs
+  at 12.1 M/s against this crate's 20.6, on the same instructions and the same two compression calls. MD5 is closest,
+  1.12x, because its compression function, with no instruction to run on, is most of the time. Against the one-shot
+  hash, which compressed both padded keys again in every tag (five calls instead of three, four instead of two), this is
+  1.34-1.76x.
+- **Short messages, keyed for each: 1.27-2.0x Go, level with the one-shot hash.** Go's `hmac.New` builds two hash
+  objects and two pads every time. Here `new` hashes the two padded keys, which the one-shot hash did in the tag
+  instead, so for a key used once both run the same five compression calls (four with SHA-512), and the two states cost
+  at most 3% (SHA-256) and nothing measurable with the slower hashes. The one-call `hmac::hmac` uses its two states up
+  rather than copying them.
+
+The states are wiped twice for every tag, because they hold the key. One volatile store per byte, which is what `wipe` does
+with bytes, took 36% of an HMAC-SHA-256 tag here (6.53 against 10.23 M tags/s, medians of three interleaved
+runs); `wipe_bytes`, which stores 16 bytes at a time, brings it within 1.5% of not wiping the states' buffers at all.
+
+What would make it faster, none of it done:
+
+- **The hashes.** HMAC is now as fast as the hash under it, so a faster SHA-1 backend (7% behind Go's here) or MD5 (2%)
+  is a faster HMAC, with nothing to change in HMAC.
+- **A smaller state.** A state holds a 144-byte block, the longest a `Digest` from outside the crate may have, where the
+  crate's hashes need 64 or 128 bytes, and every tag copies and wipes two of them.
+- **A one-call form without states.** For a key used once, hashing the padded keys with the message in one go, as the
+  one-shot hash did, skips building two states; that is the 3% of the SHA-256 row keyed for each.
+- **Many messages at once.** MD5 hashes up to 16 messages side by side on NEON (`Md5::digest_many`), and HMAC-MD5 of a
+  batch of messages could do the same; MD5 is the one hash here where that applies.
+
+No x86 figures are given yet, for the same reason as the others: nothing here can time real x86 hardware, and Rosetta 2
+translates the instructions, so its timings say nothing about an x86 CPU. The manual `Benchmarks` workflow
+(`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
+
 ## MD5
 
 MD5, specified in [RFC 1321](https://www.rfc-editor.org/info/rfc1321), is a cryptographic hash function that takes an
@@ -1272,7 +1517,7 @@ either, and both are suitable for digital signatures, certificate signing and in
 
 Two things to know when using them. First, as a Merkle-Damgard hash, SHA-256 allows **length extension**: anyone
 holding `sha256(m)` and the length of `m` can compute `sha256(m || padding || x)` without knowing `m`, because the
-digest *is* the final state. So `sha256(key || message)` is not a safe MAC — use HMAC. SHA-224 withholds the last of
+digest *is* the final state. So `sha256(key || message)` is not a safe MAC — use [HMAC](#hmac). SHA-224 withholds the last of
 the eight state words, so an attacker has to guess that one (32 bits) first, which makes extension harder but
 does not remove it. SHA-3 does not have the problem. Second, SHA-256 is fast by design, which is the wrong
 property for storing passwords; use a password-hashing construction such as PBKDF2 instead.
@@ -1515,7 +1760,7 @@ integrity checks.
 They share the one weakness of the Merkle-Damgard construction that SHA-256 has, **length extension**, but SHA-384,
 SHA-512/224 and SHA-512/256 are protected from it by their truncated output. Whoever holds `sha512(m)` and the length
 of `m` can compute `sha512(m || padding || x)` without knowing `m`, because the digest *is* the final state, so
-`sha512(key || message)` is not a safe MAC — use HMAC. SHA-384 withholds 128 bits of the state, SHA-512/256 withholds
+`sha512(key || message)` is not a safe MAC — use [HMAC](#hmac). SHA-384 withholds 128 bits of the state, SHA-512/256 withholds
 256 and SHA-512/224 withholds 288, and an attacker has to guess the withheld bits before extending, which is far
 beyond reach. That is why SHA-512/256 is sometimes chosen over SHA-256 where length extension is a concern; HMAC is
 still the right way to build a MAC from any of them. SHA-3 does not have the problem at all. And, like SHA-256,

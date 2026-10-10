@@ -43,12 +43,14 @@ runs, and it must pass cleanly.
 src/
   lib.rs          one `pub mod` per algorithm, and the re-export of `Digest` and `BlockCipher`
   digest.rs       the `Digest` trait shared by every fixed-output hash
+  incremental.rs  the hashes' internal incremental form, a state that takes a message in pieces (not public)
   block_cipher.rs the `BlockCipher` trait shared by every block cipher
   aes/            one directory per algorithm
   des/            DES and Triple DES: a block cipher with one implementation, `scalar`
   ec/             the arithmetic of the NIST curves that ECDH and ECDSA share (private; they re-export its curve types)
   ecdh/           key agreement over P-256, P-384, P-521 and X25519: keys generic over the curve
   ecdsa/          signatures over P-224, P-256, P-384 and P-521: keys and signatures generic over the curve
+  hmac/           message authentication over any `Digest`: no backends of its own, it runs on the hash's
   md5/
   sha1/
   sha2/           a family of functions: one directory per word size
@@ -67,7 +69,7 @@ Inside an algorithm's directory (`src/sha1/` is a compact example,
 | File | Holds |
 |------|-------|
 | `mod.rs` | The module documentation shown on docs.rs (`//!`, with an example that doubles as a doctest), the `mod` declarations, and the `pub use` of the public types. `md5` and `sha3` also keep here the round macros that their backends share. |
-| `digest.rs` | The public types or functions, the specification's constants, the runtime backend dispatcher, and the unit tests: known answers, differential tests against `scalar`, and the `#[ignore]`d throughput test. |
+| `digest.rs` | The public types or functions, the specification's constants, the runtime backend dispatcher, the implementation of the internal `Incremental` on that dispatcher, and the unit tests: known answers, differential tests against `scalar`, and the `#[ignore]`d throughput test. |
 | `scalar.rs` | The portable implementation. It is always compiled, it is the fallback on any CPU, and it is the reference every other backend is tested against. |
 | `aarch64.rs`, `x86.rs`, ... | One file per hardware backend, named after its architecture (`x86_avx2.rs` is a second x86 backend). Each is gated with `#[cfg(target_arch = ...)]` and entered only after the dispatcher has confirmed the CPU feature it needs. |
 
@@ -116,6 +118,23 @@ And those of `src/ecdsa/`:
 | `nist.rs` | The implementation of the private half of `Curve` for the four curves. |
 | `vectors.rs` | Test data only: RFC 6979, c2sp's key generation vectors, a selection of CAVP and of Wycheproof, the signatures of another implementation, and the chains. |
 
+A message authentication code, `src/hmac/`, has neither shape either. It has no backend to select, because it runs on
+the hash's compression function, through the hash's own dispatcher, and it implements no trait: `Hmac<D>` is generic
+over `Digest`. Its files:
+
+| File | Holds |
+|------|-------|
+| `mod.rs` | The documentation, the `mod` declaration and the `pub use` of `Hmac`, `hmac` and `VerifyError`. |
+| `mac.rs` | `Hmac`, the one-call `hmac` and `VerifyError`; the one-shot path for a hash from outside the crate; the comparison that does not stop at the first difference; and the tests: the RFC vectors, the vectors from Go and OpenSSL, truncation, verification, multi-part messages, wiping, `Debug` and the `#[ignore]`d `throughput`. |
+
+What HMAC streams through is an internal interface of the hashes, `src/incremental.rs`: the `Incremental` trait, the
+`State` that all eight hashes share (the chaining value, the bytes of an unfinished block and the length) with the
+buffering and the padding that they share too, and the tests that hold every hash in pieces to its one-shot digest.
+Each hash's `digest.rs` implements the trait in a few lines, on the compression function and the backend dispatcher it
+already has, so a message in pieces goes through the same backend as a whole one. Code that only knows `D: Digest`
+reaches it through `Digest::INCREMENTAL`, a hidden constant that the crate's hashes set and that is `None` for a hash
+implemented elsewhere; the interface is not public, so it can change without breaking anyone.
+
 The backend modules are private: users see `cryptors::sha2::Sha256`, never the
 path through `sha256`. When several functions share one algorithm, as the six
 SHA-2 functions share two, they share a directory. Each word size then has the
@@ -124,12 +143,13 @@ children, re-exports their types and holds what both need (`has_bmi`, the x86
 BMI1/BMI2 check).
 
 The fixed-output hashes (MD5, SHA-1, SHA-2) are unit types that implement
-`Digest`. SHA-3 has not been converted yet and exposes free functions, as its
+`Digest`, and, inside the crate, `Incremental`. SHA-3 has not been converted yet and exposes free functions, as its
 extendable-output functions do not fit the trait. The block ciphers (AES, DES) implement
 `BlockCipher` instead, and are not unit types: a cipher holds the key schedule it
 was built with. ECDH and ECDSA implement neither: their curves are unit types, but they only
 name the curve that a `PrivateKey<C>`, a `PublicKey<C>` or a `Signature<C>` belongs to. ECDSA takes the hash as
-a type parameter, `D: Digest`, of the functions that sign and verify a message.
+a type parameter, `D: Digest`, of the functions that sign and verify a message. HMAC is generic over `Digest` rather
+than implementing it: an `Hmac<D>` holds the two hash states it computed from its key.
 
 Each algorithm in `bench/` is its own Go module with a throughput test that
 mirrors the Rust one (same buffer, warm-up and best-of-5 method). The AES, ECDH, ECDSA, SHA-2
@@ -141,7 +161,8 @@ one also checks its inputs, with the NIST and RFC 7748 vectors and with the
 chained exchanges of `src/ecdh/keypair.rs`, so a broken build fails instead of
 passing as a figure, and the ECDSA one does the same with the signatures of
 RFC 6979, the chained signatures of `src/ecdsa/keypair.rs` and the randomized
-signatures of `src/ecdsa/vectors.rs`, which Go made. `make bench-go` runs them all, and so does the manual `Benchmarks`
+signatures of `src/ecdsa/vectors.rs`, which Go made. (`hmaccmp` does not split either: it measures the hashes, whose
+own modules time Go's portable code; it checks a known answer for each hash before it times anything.) `make bench-go` runs them all, and so does the manual `Benchmarks`
 workflow (`.github/workflows/bench.yml`) on GitHub's x86-64 and Arm runners.
 
 ## Adding or implementing an algorithm
@@ -160,6 +181,9 @@ is declared in `src/lib.rs`. When implementing one:
   goes in a file of its own, with a test (`matches_scalar_backend`) that checks
   it against `scalar` on every CPU that supports it.
 - Make a fixed-output hash implement `Digest`, and a block cipher `BlockCipher`.
+  A fixed-output hash also implements `Incremental` and sets `Digest::INCREMENTAL`,
+  so that HMAC streams through it instead of copying; a construction built on a
+  hash takes `D: Digest`, as HMAC does.
 - Where Go's standard library has the same algorithm, add its counterpart under
   `bench/<name>cmp/` and to `make bench-go`.
 - Update the algorithm table in `README.md`, setting the status to
@@ -234,6 +258,15 @@ scripted reader, `encoding_lengths` and `der_sizes_are_the_documented_ones`, `eq
 reaches, and the panic for a generator that never gives a number), `hmac_drbg::tests::*` (the layout of the seed), `der::tests::*`
 (every way to write a signature that is not the one DER prescribes, and the length at which the long form starts),
 `curve::tests::errors_say_what_went_wrong` and `throughput`.
+
+HMAC's tests are `rfc4231` and `rfc2202` (the RFCs' vectors, through every way of computing a tag and through the
+one-shot path as well), `generated_vectors` (from OpenSSL and Go, for every hash, at the key-length boundaries and on
+both sides of the inner hash's padding boundary), `truncated_tags`, `verify_accepts_only_the_tag`,
+`parts_match_the_whole_message`, `dropping_wipes_the_states`, `debug_hides_the_key` and `throughput`. Under it,
+`incremental::tests` holds every hash in pieces to its one-shot digest (`pieces_match_one_shot_at_every_split`,
+`long_message_in_uneven_pieces`, `a_clone_carries_on_from_the_same_point`) and checks `dropping_wipes_the_state`;
+`wipe::tests::wipe_bytes_zeroes_every_byte` checks the bulk wipe both use. `cargo test -- hmac:: incremental::` runs
+them all.
 
 A cipher with a single implementation has no backend to compare, so `src/des/` swaps
 `scalar_known_answers`, `matches_scalar_backend` and `unaligned_input` for
