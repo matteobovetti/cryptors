@@ -142,8 +142,7 @@ its own, and no trait, because `Hkdf<D>` is generic over `Digest`. Its files:
 | File | Holds |
 |------|-------|
 | `mod.rs` | The documentation, the `mod` declarations and the `pub use` of `Hkdf` and `Error`. |
-| `kdf.rs` | `Hkdf` (Extract, Expand, `derive`, `from_prk`) and `Error`, and the tests: RFC 5869, the vectors from Go and OpenSSL, the limits, `Debug` and the `#[ignore]`d `throughput`. |
-| `hmac.rs` | A private stand-in for the crate's HMAC until that module lands: `Keyed`, with the `new` and `mac_parts` of `crate::hmac::Hmac`, so that switching is deleting this file and changing one `use`. |
+| `kdf.rs` | `Hkdf` (Extract, Expand, `derive`, `from_prk`), which holds an `Hmac<D>` keyed with the PRK, and `Error`, and the tests: RFC 5869, the vectors from Go and OpenSSL, the limits, wiping, `Debug` and the `#[ignore]`d `throughput`. |
 
 The backend modules are private: users see `cryptors::sha2::Sha256`, never the
 path through `sha256`. When several functions share one algorithm, as the six
@@ -283,8 +282,9 @@ them all.
 HKDF's tests are `rfc_5869` (the seven cases of Appendix A, through every function of the API), `salt_lengths` and
 `prk_lengths` (salts and PRKs of HashLen, one block and one byte more, where HMAC starts hashing its key), `longest_output`
 (255 blocks, one byte more refused, and shorter outputs as its prefixes) and `long_inputs`, all four with vectors from Go
-and OpenSSL for all eight hashes, then `lengths_of_inputs` (an empty salt, a short PRK), `debug_hides_the_prk` and
-`throughput`. There is no wiping test: the key is on the heap, in the stand-in HMAC, and cannot be read once freed.
+and OpenSSL for all eight hashes, then `lengths_of_inputs` (an empty salt, a short PRK), `dropping_wipes_the_prk` (an
+`Hkdf` is its `Hmac` and nothing else, so every byte of it must be zero after the drop), `debug_hides_the_prk` and
+`throughput`. `cargo test hkdf::` runs them; HMAC's own are above.
 
 A cipher with a single implementation has no backend to compare, so `src/des/` swaps
 `scalar_known_answers`, `matches_scalar_backend` and `unaligned_input` for
