@@ -1,4 +1,5 @@
 use crate::Digest;
+use crate::incremental::{Incremental, IncrementalFns, State, fns_of};
 #[cfg(target_arch = "x86_64")]
 use crate::sha2::has_bmi;
 
@@ -201,6 +202,23 @@ impl Digest for Sha384 {
     fn digest(input: &[u8]) -> [u8; 48] {
         to_bytes(&hash_with(compress, INIT_384, input))
     }
+
+    const INCREMENTAL: Option<IncrementalFns<Self>> = Some(fns_of::<Self>());
+}
+
+/// SHA-384 a piece at a time, on the backend [`Sha384::digest`] picks.
+impl Incremental for Sha384 {
+    fn init() -> State {
+        State::new(INIT_384)
+    }
+
+    fn update(state: &mut State, input: &[u8]) {
+        state.absorb::<128>(input, compress);
+    }
+
+    fn finish(state: State) -> [u8; 48] {
+        to_bytes(&finish(state))
+    }
 }
 
 /// SHA-512 (FIPS 180-4): a 512-bit digest.
@@ -227,6 +245,23 @@ impl Digest for Sha512 {
     /// the last partial block (plus padding) is copied onto the stack.
     fn digest(input: &[u8]) -> [u8; 64] {
         to_bytes(&hash_with(compress, INIT_512, input))
+    }
+
+    const INCREMENTAL: Option<IncrementalFns<Self>> = Some(fns_of::<Self>());
+}
+
+/// SHA-512 a piece at a time, on the backend [`Sha512::digest`] picks.
+impl Incremental for Sha512 {
+    fn init() -> State {
+        State::new(INIT_512)
+    }
+
+    fn update(state: &mut State, input: &[u8]) {
+        state.absorb::<128>(input, compress);
+    }
+
+    fn finish(state: State) -> [u8; 64] {
+        to_bytes(&finish(state))
     }
 }
 
@@ -256,6 +291,23 @@ impl Digest for Sha512_224 {
     fn digest(input: &[u8]) -> [u8; 28] {
         to_bytes(&hash_with(compress, INIT_512_224, input))
     }
+
+    const INCREMENTAL: Option<IncrementalFns<Self>> = Some(fns_of::<Self>());
+}
+
+/// SHA-512/224 a piece at a time, on the backend [`Sha512_224::digest`] picks.
+impl Incremental for Sha512_224 {
+    fn init() -> State {
+        State::new(INIT_512_224)
+    }
+
+    fn update(state: &mut State, input: &[u8]) {
+        state.absorb::<128>(input, compress);
+    }
+
+    fn finish(state: State) -> [u8; 28] {
+        to_bytes(&finish(state))
+    }
 }
 
 /// SHA-512/256 (FIPS 180-4): a 256-bit digest. The SHA-512 algorithm, started
@@ -284,6 +336,31 @@ impl Digest for Sha512_256 {
     fn digest(input: &[u8]) -> [u8; 32] {
         to_bytes(&hash_with(compress, INIT_512_256, input))
     }
+
+    const INCREMENTAL: Option<IncrementalFns<Self>> = Some(fns_of::<Self>());
+}
+
+/// SHA-512/256 a piece at a time, on the backend [`Sha512_256::digest`] picks.
+impl Incremental for Sha512_256 {
+    fn init() -> State {
+        State::new(INIT_512_256)
+    }
+
+    fn update(state: &mut State, input: &[u8]) {
+        state.absorb::<128>(input, compress);
+    }
+
+    fn finish(state: State) -> [u8; 32] {
+        to_bytes(&finish(state))
+    }
+}
+
+/// Pads the message in `state` and returns the final state, which the four
+/// functions output as much of as [`to_bytes`] keeps.
+fn finish(state: State) -> [u64; 8] {
+    // The length field holds 128 bits, so the length in bits cannot overflow.
+    let bit_len = u128::from(state.message_len()) * 8;
+    state.finish::<128>(&bit_len.to_be_bytes(), compress)
 }
 
 /// Pads `input`, runs every block through `compress_fn` starting from the

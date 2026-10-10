@@ -5,6 +5,7 @@ mod digest;
 mod ec;
 pub mod ecdh;
 pub mod ecdsa;
+mod incremental;
 pub mod md5;
 pub mod sha1;
 pub mod sha2;

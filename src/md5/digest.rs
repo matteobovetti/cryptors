@@ -1,4 +1,5 @@
 use crate::Digest;
+use crate::incremental::{Incremental, IncrementalFns, State, fns_of, from_slots, to_slots};
 
 /// Initial state, RFC 1321 section 3.3.
 const INIT: [u32; 4] = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476];
@@ -64,6 +65,32 @@ impl Digest for Md5 {
     fn digest_many(inputs: &[&[u8]]) -> Vec<[u8; 16]> {
         digest_batch(inputs)
     }
+
+    const INCREMENTAL: Option<IncrementalFns<Self>> = Some(fns_of::<Self>());
+}
+
+/// MD5 a piece at a time, on the scalar backend like [`Md5::digest`].
+impl Incremental for Md5 {
+    fn init() -> State {
+        State::new(to_slots(&INIT))
+    }
+
+    fn update(state: &mut State, input: &[u8]) {
+        state.absorb::<64>(input, compress_slots);
+    }
+
+    fn finish(state: State) -> [u8; 16] {
+        let bit_len = state.message_len().wrapping_mul(8);
+        let slots = state.finish::<64>(&bit_len.to_le_bytes(), compress_slots);
+        encode(&from_slots(&slots))
+    }
+}
+
+/// The scalar compression function on the chaining value of a [`State`].
+fn compress_slots(slots: &mut [u64; 8], blocks: &[u8]) {
+    let mut state = from_slots(slots);
+    super::scalar::compress(&mut state, blocks);
+    *slots = to_slots(&state);
 }
 
 /// Pads and finalizes the hash. Takes the compression function as a
