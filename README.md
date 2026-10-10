@@ -236,17 +236,9 @@ cryptors
 │   ├── P224, P256, P384, P521       the curves, which implement the sealed trait `Curve` (ecdh has three of these types)
 │   └── Error
 <<<<<<< HEAD
-<<<<<<< HEAD
-├── ed25519                          signatures on one curve with its hash built in, so nothing is generic
-│   ├── SigningKey, VerifyingKey,    a method for each of the three schemes: Ed25519, Ed25519ctx, Ed25519ph
-│   │   Signature
-│   └── Error, MAX_CONTEXT_LEN
-=======
-=======
 ├── hkdf                             key derivation: generic over the hash, as in Hkdf<Sha256>
 │   ├── Hkdf                         a pseudorandom key, extracted or given, ready to expand into keys
 │   └── Error
->>>>>>> f72b130 (HKDF documentation)
 ├── hmac                             message authentication: built on a hash, so generic over any `Digest`
 │   ├── Hmac<D>                      keyed once, with the hash's states after the padded key
 │   ├── hmac                         the one-call form
@@ -759,7 +751,7 @@ Six things to know when using it:
 - **The shared secret is not a key.** It is one coordinate of a point, and both sides, and anyone who gets it from either
   of them, see exactly the same bytes. Run it through a key derivation function, and include both public keys in what
   that hashes, as RFC 7748 (section 6.1) describes and its section 7 explains the need for, before using any of it as a
-  key. [HKDF](#hkdf), `cryptors::hkdf`, is one.
+  key. HKDF is on the list above and not yet here.
 - **Nothing is authenticated.** ECDH gives two parties a secret in common; it does not say who they are. Someone between
   them can play each against the other and end up with a secret shared with both, so a protocol has to bind the keys to
   an identity (signatures, certificates, a pre-shared secret). Use a fresh key pair for each exchange where you can: a key
@@ -1170,9 +1162,8 @@ skips Extract for a secret that is a uniformly random key already, such as an ea
 | SHA-512/224 | `Sha512_224` | 28 bytes | 128 bytes | 7140 bytes |
 | SHA-512/256 | `Sha512_256` | 32 bytes | 128 bytes | 8160 bytes |
 
-SHA-3 is not on `Digest` yet (see [Example](#example)), so there is no HKDF-SHA3. The HMAC is the crate's own
-([HMAC](#hmac)): an `Hkdf` is an `Hmac<D>` keyed with the PRK, which hashes its padded keys once and starts every block of
-output from the states that leaves.
+SHA-3 is not on `Digest` yet (see [Example](#example)), so there is no HKDF-SHA3. HMAC is on the list above as a module of
+its own, and until it lands, `src/hkdf/hmac.rs` holds a private stand-in with the two functions HKDF needs from it.
 
 ### Usage
 
@@ -1269,11 +1260,11 @@ eight:
   longer than any block.
 
 The tests also cover the rest of the API: an empty salt gives the PRK of HashLen zeros, `from_prk` refuses a key one byte
-short and takes one of HashLen, dropping an `Hkdf` leaves every byte of it zero (it is nothing but its `Hmac`, two hash
-states with no padding between their fields), and `Debug` shows no secret. A scratch copy of `src/hkdf/kdf.rs` with each
-of 11 deliberate breaks (the salt and the IKM swapped, a PRK cut to HashLen, a counter starting at 0 or stopping at 254, a
-length check off by one, the `Hmac` never dropped, ...) fails at least one test for every one of them. HMAC itself is
-tested in its own module; see [HMAC](#hmac).
+short and takes one of HashLen, and `Debug` shows no secret. That dropping an `Hkdf` wipes its key is not tested: the key
+is on the heap, in the stand-in HMAC, and cannot be read once it is freed. A scratch copy of the code with each of 15
+deliberate breaks (a pad byte changed, a counter starting at 0 or stopping at 254, a length check off by one, keys of
+exactly one block hashed, the stack buffer overrun, ...) fails at least one test for every break but one, which put every
+message on the heap and is not a bug.
 
 ### Benchmarking
 
@@ -1291,43 +1282,36 @@ first 8 of the last key of the chain, and the two sides print the same. HKDF has
 backend its hash picks, FEAT_SHA256 and FEAT_SHA512 here, on both sides. `-tags purego` is not run, as there is no
 HKDF code to swap; the hashes have runs of their own, under [SHA-256](#sha-256) and [SHA-512](#sha-512).
 
-On an Apple M1 Pro, against Go 1.27.1's `crypto/hkdf` on the same machine (medians of five interleaved runs, higher is
+On an Apple M1 Pro, against Go 1.27.1's `crypto/hkdf` on the same machine (medians of three interleaved runs, higher is
 better):
+
+<!-- provisional: re-measure in phase 2 -->
 
 | Workload | cryptors | Go stdlib |
 |----------|----------|-----------|
-| HKDF-SHA256, Expand to 8160 bytes | **356 MiB/s** | 247 MiB/s |
-| HKDF-SHA256, Extract and Expand to a 32-byte key | **3.10 M/s** | 1.45 M/s |
-| HKDF-SHA512, Expand to 16320 bytes | **274 MiB/s** | 221 MiB/s |
-| HKDF-SHA512, Extract and Expand to a 32-byte key | **1.28 M/s** | 660 k/s |
-
-Run-to-run spread was within 2% in every cell, but the machine was not idle (a desktop, load average 3 to 5, with other
-work running in other workspaces), so the last digit means little. cryptors is ahead on all four rows.
+| HKDF-SHA256, Expand to 8160 bytes | 135 MiB/s | **240 MiB/s** |
+| HKDF-SHA256, Extract and Expand to a 32-byte key | **2.35 M/s** | 1.44 M/s |
+| HKDF-SHA512, Expand to 16320 bytes | 99 MiB/s | **214 MiB/s** |
+| HKDF-SHA512, Extract and Expand to a 32-byte key | **828 k/s** | 641 k/s |
 
 Per workload:
 
-- **Long outputs: cryptors is 1.44x (SHA-256) and 1.24x (SHA-512) faster.** Both sides hash the padded keys once, keep
-  the hash states after them, and start every block from those: two calls of the compression function per block of
-  output. The difference is in the work around them. From the second block on, Go restores its two states from their
-  marshaled bytes for every block, behind the `hash.Hash` interface, and it allocates each output; cryptors copies the
-  states and writes into the caller's buffer. Before the crate had an HMAC, HKDF ran on a stand-in that hashed the padded keys again for every block, four
-  calls instead of two, and Expand measured 135 and 99 MiB/s in three runs: 1.78x and 2.17x behind Go, where it is now
-  ahead.
-- **Short keys: cryptors is 2.15x (SHA-256) and 1.94x (SHA-512) faster.** For a 32-byte key both sides make the same
-  eight calls of the compression function: two to key HMAC with the salt, two for the PRK, two to key HMAC with the PRK,
-  and two for the one block of output. Go's `hkdf.Key` also allocates two HMAC objects with their four hash states, and
-  the output, on every call; cryptors allocates nothing.
+- **Short keys: cryptors is 1.64x (SHA-256) and 1.29x (SHA-512) faster.** No HMAC key is used for more than one block
+  here, so both sides hash the same blocks, and the difference is in the work around the hash. Go's `hkdf.Key`, for one,
+  allocates two HMAC objects and their four hash states on every call.
+- **Long outputs: Go is 1.78x (SHA-256) and 2.17x (SHA-512) faster.** Go's HMAC hashes the padded key once, saves the
+  hash states after it, and restores them for every later block. The stand-in HMAC here cannot, because `Digest` hashes a
+  whole message in one call, so it hashes the padded key again for each of the 255 blocks: four calls of the compression
+  function per block of output, where Go needs two. The rest is the wiping of HMAC's buffers, one volatile byte store at
+  a time; in one run with it removed, Expand was 1.41x (SHA-256) and 1.30x (SHA-512) faster.
 
-Measured against the bare hashes in their own sections (2365 MiB/s for SHA-256, 1386 for SHA-512), two calls of the
-compression function per block would allow about 590 MiB/s of SHA-256 output and about 345 of SHA-512. The figures
-above are 60% and 79% of that. The rest goes outside the compression function: copying the two states that each block
-starts from, wiping the copies afterwards, and the padding. How it splits between those was not measured.
+These figures are for the stand-in HMAC in `src/hkdf/hmac.rs`, and will move when HKDF switches to the crate's own.
 
-What would make it faster, none of it done: an Expand that started every block from one pair of scratch states, copied
-into from the saved ones and wiped once at the end rather than after every block, which needs a way into HMAC that the
-crate does not have; and, for many derivations at once, hashing their blocks side by side as MD5 and SHA-3 do with their
-`_many` functions, which SHA-2 does not have. Within one Expand there is nothing to run side by side, since each block
-needs the one before it.
+What would make it faster, none of it done: an HMAC that keeps the state of the hash after the padded key, which needs
+`Digest` to hash a message in pieces, and would halve the work of a long Expand; wiping with wider stores than one byte;
+and, for many derivations at once, hashing their blocks side by side as MD5 and SHA-3 do with their `_many` functions,
+which SHA-2 does not have. Within one Expand there is nothing to run side by side, since each block needs the one
+before it.
 
 No x86 figures are given yet, for the same reason as the others: nothing here can time real x86 hardware, and Rosetta 2
 translates the instructions, so its timings say nothing about an x86 CPU. The manual `Benchmarks` workflow
@@ -1455,51 +1439,6 @@ Five things to know when using it:
 ### Testing
 
 ```sh
-<<<<<<< HEAD
-cargo test -- ed25519 ec::fe25519   # RFC 8032, Go's vectors, 768 signatures from Go and OpenSSL, every verification rule, and the arithmetic against references
-```
-
-The known-answer tests are every example of RFC 8032 for these three schemes: the five of section 7.1 for Ed25519 (with
-the 1023-byte message and SHA(abc)), the four of section 7.2 for Ed25519ctx and the one of section 7.3 for Ed25519ph. The
-rest of the confidence comes from other kinds of test:
-
-- **Go's vectors.** The 128 lines of `crypto/ed25519/testdata/sign.input.gz`, a selection from the file the authors of
-  Ed25519 published with their software: a key, its public key, a message of up to 1023 bytes and its signature, read in
-  Go's 64-byte format. The file is in `src/ed25519/testdata/sign.input`, decompressed but otherwise unchanged, so that it
-  can be compared with Go's.
-- **768 signatures from Go and OpenSSL.** 256 keys derived from SHA-256, each signing a message of 0 to 255 bytes under
-  each of the three schemes, with every context length from 0 to 255, so that the hash inputs end on both sides of
-  SHA-512's block boundaries. The SHA-256 of the outputs comes from Go's `crypto/ed25519`, and `bench/ed25519cmp`
-  recomputes it. OpenSSL 3.6 makes the same signatures, all but the three of the empty message, which its command line
-  cannot sign.
-- **Every rule of verification.** Every bit of a signature, of a public key and of a message flipped; S + ℓ, ℓ and
-  2^256 - 1 as S, and the malleated signature of Go's own test; the identity as R, encoded canonically (accepted) and in
-  two non-canonical ways (refused); all 40 non-canonical encodings of a public key, and the eight points of small order;
-  and, to pin down the cofactorless equation, a key with a component of order 8, under which a signature verifies exactly
-  when the challenge is a multiple of 8. Go's `crypto/ed25519` gives the same verdicts on the R and cofactor cases.
-- **Go's edge cases.** Once, outside the tests, the 768 cases of Filippo Valsorda's `ed25519vectors`, the set that Go's
-  own test downloads (points of small order, non-canonical encodings and mixed-order components, for A and for R): this
-  crate gives the same verdict as Go on 656 of them, and each of the other 112 has a public key of small order, which
-  `VerifyingKey::from_bytes` refuses and Go accepts.
-- **Differential tests.** The field, which X25519 shares and whose tests are in `src/ec/fe25519.rs`, against the generic
-  Montgomery field of the NIST curves (`src/ec/field.rs`), with limbs at the largest values its bounds allow, which no
-  input from the curve comes near, and for the parts that only Ed25519 uses (the negation, the power that takes a
-  square root, the square root of a ratio, the sign); the reduction and the
-  multiplication of scalars against a bit-at-a-time reference, at the values where Barrett reduction can go wrong; and
-  verification's double multiplication against plain double-and-add, at scalars such as 0, ℓ - 1 and repeated bit
-  patterns, since S is whatever the sender of a signature chose.
-- **Mutation testing.** 31 small changes to the code (a constant, an offset, a dropped check, a loop bound) in the field,
-  the scalars, the points, the signing and verifying code and `generate`, each applied to a scratch copy: 30 make a test
-  fail, and the one that survives is the overwriting of the digest of the seed, which cannot be observed. Every test of
-  `src/ed25519/` but the published vectors is the only one to catch at least one of them, and tests that could not be
-  shown to do so were left out. A Barrett constant off by one, a carry lost when two scalars are multiplied, and the offset of the field's
-  subtraction cut from 16 times the prime to twice, pass every known answer and are caught only by the reference tests;
-  a context length written in 7 bits instead of 8 is caught only by the 768 signatures, whose contexts reach 255 bytes.
-
-The tests also cover the other behaviour of the API: the longest context and one byte more, an empty Ed25519ctx
-context, slices of the wrong length, a key pair whose halves do not match, `generate` with a reader that has 32 bytes and
-one that runs out, that `Debug` shows no secret, and that a signing key leaves nothing behind after it is dropped.
-=======
 cargo test -- hmac:: incremental::   # the RFC vectors, vectors from Go and OpenSSL, verification, and the hashes in pieces
 ```
 
@@ -1527,7 +1466,6 @@ The tests also check that dropping an `Hmac`, or a hash state, leaves zeros wher
 `Debug` shows nothing of the key. Each test was checked by breaking, in a scratch copy, the code it guards (a pad byte,
 the rule for long keys, the comparison, the tag-length policy, the order of the parts, the buffering and the padding of
 the hashes in pieces, the wipes) and seeing it fail.
->>>>>>> 3ffd809 (hmac documentation)
 
 ### Benchmarking
 

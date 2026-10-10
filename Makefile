@@ -59,9 +59,14 @@ bench-go:
 	cd bench/ecdsacmp && go test -v
 	cd bench/ecdsacmp && go test -tags purego -v
 <<<<<<< HEAD
+<<<<<<< HEAD
 	cd bench/hkdfcmp && go test -v
 	cd bench/hmaccmp && go test -v
 >>>>>>> 90af113 (hmac implementation)
+=======
+	cd bench/hkdfcmp && go test -v
+	cd bench/hmaccmp && go test -v
+>>>>>>> hkdf
 	cd bench/sha1cmp && go test -v
 	cd bench/md5cmp && go test -v
 	cd bench/sha256cmp && go test -v
