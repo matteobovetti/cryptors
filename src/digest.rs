@@ -58,6 +58,16 @@ pub trait Digest {
     fn digest_many(inputs: &[&[u8]]) -> Vec<Self::Output> {
         inputs.iter().map(|input| Self::digest(input)).collect()
     }
+
+    /// The crate's incremental form of this hash, which takes the message a
+    /// piece at a time, or `None`. Not part of the public API.
+    ///
+    /// The crate's own hashes set it, so that its constructions (HMAC) can
+    /// stream a message, and carry on from a hashed prefix, with any of them.
+    /// A hash implemented outside the crate cannot name the type, keeps the
+    /// default `None`, and gets the one-shot path.
+    #[doc(hidden)]
+    const INCREMENTAL: Option<crate::incremental::IncrementalFns<Self>> = None;
 }
 
 const HEX: &[u8; 16] = b"0123456789abcdef";

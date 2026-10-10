@@ -1,4 +1,5 @@
 use crate::Digest;
+use crate::incremental::{Incremental, IncrementalFns, State, fns_of, from_slots, to_slots};
 #[cfg(target_arch = "x86_64")]
 use crate::sha2::has_bmi;
 
@@ -113,6 +114,23 @@ impl Digest for Sha224 {
     fn digest(input: &[u8]) -> [u8; 28] {
         to_bytes(&hash_with(compress, INIT_224, input))
     }
+
+    const INCREMENTAL: Option<IncrementalFns<Self>> = Some(fns_of::<Self>());
+}
+
+/// SHA-224 a piece at a time, on the backend [`Sha224::digest`] picks.
+impl Incremental for Sha224 {
+    fn init() -> State {
+        State::new(to_slots(&INIT_224))
+    }
+
+    fn update(state: &mut State, input: &[u8]) {
+        state.absorb::<64>(input, compress_slots);
+    }
+
+    fn finish(state: State) -> [u8; 28] {
+        to_bytes(&finish(state))
+    }
 }
 
 /// SHA-256 (FIPS 180-4): a 256-bit digest.
@@ -140,6 +158,37 @@ impl Digest for Sha256 {
     fn digest(input: &[u8]) -> [u8; 32] {
         to_bytes(&hash_with(compress, INIT_256, input))
     }
+
+    const INCREMENTAL: Option<IncrementalFns<Self>> = Some(fns_of::<Self>());
+}
+
+/// SHA-256 a piece at a time, on the backend [`Sha256::digest`] picks.
+impl Incremental for Sha256 {
+    fn init() -> State {
+        State::new(to_slots(&INIT_256))
+    }
+
+    fn update(state: &mut State, input: &[u8]) {
+        state.absorb::<64>(input, compress_slots);
+    }
+
+    fn finish(state: State) -> [u8; 32] {
+        to_bytes(&finish(state))
+    }
+}
+
+/// [`compress`] on the chaining value of a [`State`].
+fn compress_slots(slots: &mut [u64; 8], blocks: &[u8]) {
+    let mut state = from_slots(slots);
+    compress(&mut state, blocks);
+    *slots = to_slots(&state);
+}
+
+/// Pads the message in `state` and returns the final state, which SHA-224 and
+/// SHA-256 output as much of as [`to_bytes`] keeps.
+fn finish(state: State) -> [u32; 8] {
+    let bit_len = state.message_len().wrapping_mul(8);
+    from_slots(&state.finish::<64>(&bit_len.to_be_bytes(), compress_slots))
 }
 
 /// Pads `input`, runs every block through `compress_fn` starting from the

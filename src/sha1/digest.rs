@@ -1,4 +1,5 @@
 use crate::Digest;
+use crate::incremental::{Incremental, IncrementalFns, State, fns_of, from_slots, to_slots};
 
 /// Initial hash state (RFC 3174 section 6.1).
 const INIT: [u32; 5] = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0];
@@ -72,6 +73,32 @@ impl Digest for Sha1 {
     fn digest(input: &[u8]) -> [u8; 20] {
         digest_with(compress, input)
     }
+
+    const INCREMENTAL: Option<IncrementalFns<Self>> = Some(fns_of::<Self>());
+}
+
+/// SHA-1 a piece at a time, on the backend [`Sha1::digest`] picks.
+impl Incremental for Sha1 {
+    fn init() -> State {
+        State::new(to_slots(&INIT))
+    }
+
+    fn update(state: &mut State, input: &[u8]) {
+        state.absorb::<64>(input, compress_slots);
+    }
+
+    fn finish(state: State) -> [u8; 20] {
+        let bit_len = state.message_len().wrapping_mul(8);
+        let slots = state.finish::<64>(&bit_len.to_be_bytes(), compress_slots);
+        encode(&from_slots(&slots))
+    }
+}
+
+/// [`compress`] on the chaining value of a [`State`].
+fn compress_slots(slots: &mut [u64; 8], blocks: &[u8]) {
+    let mut state = from_slots(slots);
+    compress(&mut state, blocks);
+    *slots = to_slots(&state);
 }
 
 /// Does the padding and final hashing step. Takes the backend as a parameter
@@ -96,7 +123,12 @@ fn digest_with<F: FnMut(&mut [u32; 5], &[u8])>(mut compress_fn: F, input: &[u8])
     tail[total_len - 8..total_len].copy_from_slice(&bit_len.to_be_bytes());
 
     compress_fn(&mut state, &tail[..total_len]);
+    encode(&state)
+}
 
+/// Writes the five state words out as bytes, big-endian.
+#[inline]
+fn encode(state: &[u32; 5]) -> [u8; 20] {
     let mut out = [0u8; 20];
     for (word, chunk) in state.iter().zip(out.chunks_exact_mut(4)) {
         chunk.copy_from_slice(&word.to_be_bytes());

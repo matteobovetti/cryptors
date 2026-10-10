@@ -6,6 +6,7 @@ mod ec;
 pub mod ecdh;
 pub mod ecdsa;
 pub mod ed25519;
+mod incremental;
 pub mod md5;
 pub mod sha1;
 pub mod sha2;
