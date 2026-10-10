@@ -115,7 +115,7 @@ And those of `src/ecdsa/`:
 | `keypair.rs` | `PrivateKey` and `PublicKey` with the four ways to sign and the two to verify, and the tests of the API: RFC 6979, Wycheproof, CAVP, the hedged and the chained signatures, the vectors for key generation, invalid keys and signatures, `generate`, wiping, `Debug` and the `#[ignore]`d `throughput`. |
 | `signature.rs`, `der.rs` | `Signature` with its two encodings, and the strict DER reader and writer under it. |
 | `algorithm.rs` | Signing and verifying as FIPS 186-5 writes them, on any curve of `src/ec/`; the tests of the digest rules and of the branch that a random nonce never reaches. |
-| `hmac_drbg.rs` | A private HMAC and the HMAC_DRBG (SP 800-90A) that makes the per-message secrets, until the crate has a public HMAC; its tests check it against RFC 6979 and against Python's `hmac`. |
+| `hmac_drbg.rs` | The HMAC_DRBG (SP 800-90A) that makes the per-message secrets, on the crate's `Hmac`; its tests check it against RFC 6979, and the HMAC under it against Python's `hmac`. |
 | `nist.rs` | The implementation of the private half of `Curve` for the four curves. |
 | `vectors.rs` | Test data only: RFC 6979, c2sp's key generation vectors, a selection of CAVP and of Wycheproof, the signatures of another implementation, and the chains. |
 

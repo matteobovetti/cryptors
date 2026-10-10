@@ -1300,8 +1300,9 @@ cargo test -- hmac:: incremental::   # the RFC vectors, vectors from Go and Open
 The known-answer tests are the seven test cases of RFC 4231 for HMAC-SHA-224, -256, -384 and -512, including the keys
 longer than a block and the 128-bit truncation, and the seven of RFC 2202 for HMAC-MD5 and HMAC-SHA-1, with its 96-bit
 truncations. Every vector goes through `hmac`, `Hmac::mac`, `mac_parts` and `verify`, and through the one-shot path that
-a hash from outside the crate takes, as well as the streaming one. The rest of the confidence comes from four other kinds
-of test:
+a hash from outside the crate takes, as well as the streaming one. ECDSA's HMAC_DRBG runs on this HMAC, so its tests
+(the per-message secret numbers of RFC 6979, and the RFC's signatures) exercise it too. The rest of the confidence comes
+from four other kinds of test:
 
 - **Vectors from Go and OpenSSL.** For each of the eight hashes, including SHA-512/224 and SHA-512/256, which no RFC
   covers: the RFC 4231 inputs, the empty key and message, keys one byte shorter than a block, exactly a block and one
