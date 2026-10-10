@@ -50,13 +50,6 @@ pub(crate) trait Incremental: Digest {
 /// [`Digest::INCREMENTAL`] carries them to code that only knows `D: Digest`.
 ///
 /// Nameable only inside the crate: the module is private.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "read by HMAC, the first construction to stream through it"
-    )
-)]
 pub struct IncrementalFns<D: Digest + ?Sized> {
     pub(crate) init: fn() -> State,
     pub(crate) update: fn(&mut State, &[u8]),
@@ -115,6 +108,27 @@ impl State {
             pending_len: 0,
             total_len: 0,
         }
+    }
+
+    /// A state that holds `prefix` without hashing it, for a hash with no
+    /// incremental form: HMAC keeps a padded key this way, and puts it in
+    /// front of every message before it hashes the two in one go. Such a state
+    /// is only ever read back with [`held`](Self::held), never given to a
+    /// hash.
+    ///
+    /// `prefix` is at most [`MAX_BLOCK_LEN`] bytes long; HMAC checks that at
+    /// compile time.
+    pub(crate) fn holding(prefix: &[u8]) -> Self {
+        let mut state = Self::new([0; 8]);
+        state.pending[..prefix.len()].copy_from_slice(prefix);
+        state.pending_len = prefix.len();
+        state.total_len = prefix.len() as u64;
+        state
+    }
+
+    /// The bytes a state made by [`holding`](Self::holding) holds.
+    pub(crate) fn held(&self) -> &[u8] {
+        &self.pending[..self.pending_len]
     }
 
     /// How many bytes of message the state has taken, modulo 2^64.
