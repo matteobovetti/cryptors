@@ -27,11 +27,12 @@ jobs:
         # (reported under the same feature) does the same for SHA-512. AES uses
         # FEAT_AES where the runner has it. DES and TDEA have no hardware
         # backend: the same portable code is timed on both architectures. So
-        # does ECDH. Go's crypto/ecdh has assembly for P-256 on both
-        # architectures and for X25519 on x86-64 only, so its `purego` run is
-        # the like-for-like one there; P-384 and P-521 are portable code in Go
-        # too. On x86-64 our field arithmetic compiles to `mulq` and does not
-        # use BMI2 or ADX even where the runner has them (`lscpu` says).
+        # do ECDH and ECDSA. Go's crypto/ecdh has assembly for P-256 on both
+        # architectures and for X25519 on x86-64 only, and crypto/ecdsa for
+        # P-256 on both, so their `purego` runs are the like-for-like ones
+        # there; the other curves are portable code in Go too. On x86-64 our
+        # field arithmetic compiles to `mulq` and does not use BMI2 or ADX even
+        # where the runner has them (`lscpu` says).
         runner: [ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
     steps:

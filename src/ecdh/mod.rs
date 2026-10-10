@@ -266,18 +266,15 @@
 //! let _ = private.diffie_hellman(&public);
 //! ```
 
-mod ct;
 mod curve;
 mod fe25519;
-mod field;
 mod keypair;
 mod nist;
 #[cfg(test)]
 mod vectors;
-mod weierstrass;
 mod x25519;
 
+pub use crate::ec::{P256, P384, P521};
 pub use curve::{Curve, Error};
 pub use keypair::{PrivateKey, PublicKey, SharedSecret};
-pub use nist::{P256, P384, P521};
 pub use x25519::X25519;

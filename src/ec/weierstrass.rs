@@ -1,5 +1,5 @@
 //! Points of a curve `y^2 = x^3 - 3x + b` over a prime field, which is the
-//! shape of all three NIST curves of this module (their `a` is -3).
+//! shape of all four NIST curves of this module (their `a` is -3).
 //!
 //! A point is kept in projective coordinates `(X : Y : Z)`, standing for the
 //! affine point `(X / Z, Y / Z)`, and the point at infinity is `(0 : 1 : 0)`.
@@ -13,9 +13,10 @@
 
 use super::ct;
 use super::field::{Fe, Modulus};
+use core::marker::PhantomData;
 
 /// A curve `y^2 = x^3 - 3x + b` of prime order, with a generator.
-pub(super) trait Weierstrass<const N: usize>: Modulus<N> {
+pub(crate) trait Weierstrass<const N: usize>: Modulus<N> {
     /// The coefficient `b`, below the prime, as little-endian limbs.
     const B: [u64; N];
     /// The coordinates of the generator.
@@ -24,10 +25,41 @@ pub(super) trait Weierstrass<const N: usize>: Modulus<N> {
     /// The order of the generator, as a big-endian number of the same length
     /// as an encoded scalar.
     const ORDER: &'static [u8];
+
+    /// The multiples of the generator that `BaseTable` holds, built on first
+    /// use and kept for the life of the process, so that everything that
+    /// multiplies the generator of this curve shares one table.
+    fn base_table() -> &'static BaseTable<Self, N>
+    where
+        Self: Sized;
 }
 
+/// The order of the generator of `C` as a modulus: the integers modulo `n` are
+/// the scalars of the curve, the numbers a point is multiplied by.
+pub(crate) struct Order<C, const N: usize>(PhantomData<C>);
+
+/// The big-endian number `bytes` as `N` little-endian limbs.
+const fn limbs_from_be<const N: usize>(bytes: &[u8]) -> [u64; N] {
+    assert!(bytes.len() <= 8 * N, "the number does not fit in the limbs");
+    let mut limbs = [0; N];
+    let mut i = 0;
+    while i < bytes.len() {
+        let byte = bytes[bytes.len() - 1 - i];
+        limbs[i / 8] |= (byte as u64) << (8 * (i % 8));
+        i += 1;
+    }
+    limbs
+}
+
+impl<C: Weierstrass<N>, const N: usize> Modulus<N> for Order<C, N> {
+    const P: [u64; N] = limbs_from_be(C::ORDER);
+}
+
+/// An integer modulo the order of the curve `C`.
+pub(crate) type Scalar<C, const N: usize> = Fe<Order<C, N>, N>;
+
 /// A point of the curve `C`.
-pub(super) struct Point<C: Weierstrass<N>, const N: usize> {
+pub(crate) struct Point<C: Weierstrass<N>, const N: usize> {
     x: Fe<C, N>,
     y: Fe<C, N>,
     z: Fe<C, N>,
@@ -46,14 +78,14 @@ impl<C: Weierstrass<N>, const N: usize> Point<C, N> {
     const B: Fe<C, N> = Fe::from_limbs(C::B);
 
     /// The point at infinity.
-    pub(super) const IDENTITY: Self = Self {
+    pub(crate) const IDENTITY: Self = Self {
         x: Fe::ZERO,
         y: Fe::ONE,
         z: Fe::ZERO,
     };
 
     /// The generator of the curve.
-    pub(super) const GENERATOR: Self = Self {
+    pub(crate) const GENERATOR: Self = Self {
         x: Fe::from_limbs(C::GX),
         y: Fe::from_limbs(C::GY),
         z: Fe::ONE,
@@ -62,7 +94,7 @@ impl<C: Weierstrass<N>, const N: usize> Point<C, N> {
     /// The point with the affine coordinates `(x, y)`, given as the big-endian
     /// encodings of SEC 1, or `None` if either is not a number below the prime
     /// or the point is not on the curve. All of that is public.
-    pub(super) fn from_affine_bytes(x: &[u8], y: &[u8]) -> Option<Self> {
+    pub(crate) fn from_affine_bytes(x: &[u8], y: &[u8]) -> Option<Self> {
         let (x, y) = (Fe::from_be_bytes(x)?, Fe::from_be_bytes(y)?);
         // y^2 = x^3 - 3x + b
         let rhs = x.square() * x - (x + x + x) + Self::B;
@@ -79,7 +111,7 @@ impl<C: Weierstrass<N>, const N: usize> Point<C, N> {
     /// called on are the product of a scalar below the order and a point other
     /// than infinity, which is never the identity, so the answer is always the
     /// same and tells nothing.
-    pub(super) fn to_affine(self) -> Option<(Fe<C, N>, Fe<C, N>)> {
+    pub(crate) fn to_affine(self) -> Option<(Fe<C, N>, Fe<C, N>)> {
         if self.z.is_zero() == 1 {
             return None;
         }
@@ -98,7 +130,7 @@ impl<C: Weierstrass<N>, const N: usize> Point<C, N> {
     }
 
     /// `self + q`: Algorithm 4 of the paper, for `a = -3`.
-    pub(super) fn add(&self, q: &Self) -> Self {
+    pub(crate) fn add(&self, q: &Self) -> Self {
         let (x1, y1, z1) = (self.x, self.y, self.z);
         let (x2, y2, z2) = (q.x, q.y, q.z);
         let b = Self::B;
@@ -155,7 +187,7 @@ impl<C: Weierstrass<N>, const N: usize> Point<C, N> {
     }
 
     /// `self + self`: Algorithm 6 of the paper, for `a = -3`.
-    pub(super) fn double(&self) -> Self {
+    pub(crate) fn double(&self) -> Self {
         let (x, y, z) = (self.x, self.y, self.z);
         let b = Self::B;
 
@@ -203,7 +235,7 @@ impl<C: Weierstrass<N>, const N: usize> Point<C, N> {
 
     /// `-self`.
     #[cfg(test)]
-    pub(super) fn neg(&self) -> Self {
+    pub(crate) fn neg(&self) -> Self {
         Self {
             x: self.x,
             y: self.y.neg(),
@@ -213,7 +245,7 @@ impl<C: Weierstrass<N>, const N: usize> Point<C, N> {
 
     /// Whether the two represent the same point.
     #[cfg(test)]
-    pub(super) fn same_as(&self, other: &Self) -> bool {
+    pub(crate) fn same_as(&self, other: &Self) -> bool {
         // X1 / Z1 = X2 / Z2 and Y1 / Z1 = Y2 / Z2, without dividing; for two
         // points at infinity both sides are zero.
         (self.x * other.z).eq(&(other.x * self.z)) == 1
@@ -238,7 +270,7 @@ impl<C: Weierstrass<N>, const N: usize> Point<C, N> {
     /// The scalar is taken four bits at a time, from the top: four doublings,
     /// then one addition of the multiple of the point that the four bits name,
     /// looked up in a table of the multiples 0 to 15.
-    pub(super) fn mul(&self, scalar: &[u8]) -> Self {
+    pub(crate) fn mul(&self, scalar: &[u8]) -> Self {
         // `table[k]` is `(k + 1)` times the point.
         let mut table = [*self; 15];
         for k in 1..15 {
@@ -266,7 +298,7 @@ impl<C: Weierstrass<N>, const N: usize> Point<C, N> {
     }
 }
 
-/// The multiples of the generator that `Point::mul_base` adds up.
+/// The multiples of the generator that `BaseTable::mul` adds up.
 ///
 /// `windows[i][j - 1]` is `j * 16^i * G` for `j` from 1 to 15: for each of the
 /// four-bit windows of a scalar, the 15 points it can name. Having those
@@ -274,13 +306,13 @@ impl<C: Weierstrass<N>, const N: usize> Point<C, N> {
 /// product with the generator is just one addition per window.
 ///
 /// The table holds public data only.
-pub(super) struct BaseTable<C: Weierstrass<N>, const N: usize> {
+pub(crate) struct BaseTable<C: Weierstrass<N>, const N: usize> {
     windows: Vec<[Point<C, N>; 15]>,
 }
 
 impl<C: Weierstrass<N>, const N: usize> BaseTable<C, N> {
     /// Builds the table for scalars of `scalar_len` bytes.
-    pub(super) fn new(scalar_len: usize) -> Self {
+    pub(crate) fn new(scalar_len: usize) -> Self {
         let mut windows = Vec::with_capacity(2 * scalar_len);
         let mut base = Point::<C, N>::GENERATOR;
         for _ in 0..2 * scalar_len {
@@ -298,7 +330,7 @@ impl<C: Weierstrass<N>, const N: usize> BaseTable<C, N> {
 
     /// `scalar * G`, for a big-endian `scalar` of the length the table was
     /// built for.
-    pub(super) fn mul(&self, scalar: &[u8]) -> Point<C, N> {
+    pub(crate) fn mul(&self, scalar: &[u8]) -> Point<C, N> {
         assert_eq!(2 * scalar.len(), self.windows.len());
         let mut acc = Point::<C, N>::IDENTITY;
         // Window `2k` holds the low nibble of the `k`-th byte from the end,

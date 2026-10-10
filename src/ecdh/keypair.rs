@@ -1,8 +1,8 @@
 //! Private keys, public keys and shared secrets.
 
-use super::ct;
 use super::curve::{Curve, Error, MAX_PRIVATE_KEY_LEN, MAX_PUBLIC_KEY_LEN, MAX_SHARED_SECRET_LEN};
 use crate::digest::hex;
+use crate::ec::ct;
 use crate::wipe::wipe;
 use core::fmt;
 use core::marker::PhantomData;

@@ -46,7 +46,9 @@ src/
   block_cipher.rs the `BlockCipher` trait shared by every block cipher
   aes/            one directory per algorithm
   des/            DES and Triple DES: a block cipher with one implementation, `scalar`
+  ec/             the arithmetic of the NIST curves that ECDH and ECDSA share (private; they re-export its curve types)
   ecdh/           key agreement over P-256, P-384, P-521 and X25519: keys generic over the curve
+  ecdsa/          signatures over P-224, P-256, P-384 and P-521: keys and signatures generic over the curve
   md5/
   sha1/
   sha2/           a family of functions: one directory per word size
@@ -77,20 +79,42 @@ portable implementation, like `src/des/` (no CPU has a DES instruction), keeps t
 same shape: `schedule.rs`, `scalar.rs` and `cipher.rs`, plus `tables.rs` for the
 constants of the standard and, for the tests only, `reference.rs`.
 
-A key agreement, `src/ecdh/`, has neither shape. There is no backend to select, because no x86 or Arm CPU has an
-instruction for elliptic curves, and no trait shared with the other algorithms: the keys are generic over a sealed `Curve` trait, and
-the four curves are the only types that implement it. Its files, from the API down:
+A key agreement, `src/ecdh/`, and a signature scheme, `src/ecdsa/`, have neither shape. There is no backend to
+select, because no x86 or Arm CPU has an instruction for elliptic curves, and no trait shared with the other algorithms:
+the keys are generic over a sealed `Curve` trait (one for each of the two), and the curves are the only types that
+implement it. The curve types themselves, `P224`, `P256`, `P384` and `P521`, are defined once, in `src/ec/`, and
+re-exported by the two modules that use them. The files of `src/ec/`, which is not public:
+
+| File | Holds |
+|------|-------|
+| `nist.rs` | The four NIST curves: the types, their constants, the table of multiples of the generator that every user of a curve shares, and the encodings of points and scalars. |
+| `weierstrass.rs` | The group law of the curves (complete formulas, a four-bit window), and the order of a curve as a modulus, which is the field of the scalars of ECDSA. |
+| `field.rs` | The arithmetic modulo a prime that the two use (Montgomery form, any number of limbs). |
+| `ct.rs` | The comparisons and selections that do not branch. Anything that depends on a secret goes through these. |
+
+The files of `src/ecdh/`, from the API down:
 
 | File | Holds |
 |------|-------|
 | `mod.rs` | The documentation, the `mod` declarations and the `pub use` of the keys, the curves and the error. |
 | `curve.rs` | `Curve`, the public half of the trait (the names and sizes), the private half it requires, which does the work on byte strings, and `Error`. |
 | `keypair.rs` | `PrivateKey`, `PublicKey`, `SharedSecret`, and the tests of the API: known answers, Wycheproof, invalid keys, `generate`, the chained exchanges, wiping, `Debug` and the `#[ignore]`d `throughput`. |
-| `nist.rs`, `x25519.rs` | One curve family each: the types, their constants and their implementation of the private half of `Curve`. |
-| `weierstrass.rs`, `field.rs` | The group law of the three NIST curves, and the arithmetic modulo a prime that it and the curves use (Montgomery form, any number of limbs). |
+| `nist.rs`, `x25519.rs` | One curve family each: its implementation of the private half of `Curve` (and, for X25519, the types and constants). |
 | `fe25519.rs` | The field of X25519, in five limbs of 51 bits. |
-| `ct.rs` | The comparisons and selections that do not branch. Anything that depends on a secret goes through these. |
 | `vectors.rs` | Test data only (`#[cfg(test)]`): known answers, the Wycheproof selection and the chained exchanges' results. |
+
+And those of `src/ecdsa/`:
+
+| File | Holds |
+|------|-------|
+| `mod.rs` | The documentation, the `mod` declarations and the `pub use` of the keys, the signature, the curves and the error. |
+| `curve.rs` | `Curve`, its private half (which also lists what a source of per-message secrets does) and `Error`. |
+| `keypair.rs` | `PrivateKey` and `PublicKey` with the four ways to sign and the two to verify, and the tests of the API: RFC 6979, Wycheproof, CAVP, the hedged and the chained signatures, the vectors for key generation, invalid keys and signatures, `generate`, wiping, `Debug` and the `#[ignore]`d `throughput`. |
+| `signature.rs`, `der.rs` | `Signature` with its two encodings, and the strict DER reader and writer under it. |
+| `algorithm.rs` | Signing and verifying as FIPS 186-5 writes them, on any curve of `src/ec/`; the tests of the digest rules and of the branch that a random nonce never reaches. |
+| `hmac_drbg.rs` | A private HMAC and the HMAC_DRBG (SP 800-90A) that makes the per-message secrets, until the crate has a public HMAC; its tests check it against RFC 6979 and against Python's `hmac`. |
+| `nist.rs` | The implementation of the private half of `Curve` for the four curves. |
+| `vectors.rs` | Test data only: RFC 6979, c2sp's key generation vectors, a selection of CAVP and of Wycheproof, the signatures of another implementation, and the chains. |
 
 The backend modules are private: users see `cryptors::sha2::Sha256`, never the
 path through `sha256`. When several functions share one algorithm, as the six
@@ -103,18 +127,21 @@ The fixed-output hashes (MD5, SHA-1, SHA-2) are unit types that implement
 `Digest`. SHA-3 has not been converted yet and exposes free functions, as its
 extendable-output functions do not fit the trait. The block ciphers (AES, DES) implement
 `BlockCipher` instead, and are not unit types: a cipher holds the key schedule it
-was built with. ECDH implements neither: its curves are unit types, but they only
-name the curve that a `PrivateKey<C>` or a `PublicKey<C>` belongs to.
+was built with. ECDH and ECDSA implement neither: their curves are unit types, but they only
+name the curve that a `PrivateKey<C>`, a `PublicKey<C>` or a `Signature<C>` belongs to. ECDSA takes the hash as
+a type parameter, `D: Digest`, of the functions that sign and verify a message.
 
 Each algorithm in `bench/` is its own Go module with a throughput test that
-mirrors the Rust one (same buffer, warm-up and best-of-5 method). The AES, ECDH, SHA-2
+mirrors the Rust one (same buffer, warm-up and best-of-5 method). The AES, ECDH, ECDSA, SHA-2
 and SHA-3 ones also split into `impl_asm_test.go` and `impl_purego_test.go`, so that
 `-tags purego` selects Go's portable code, the counterpart of our `scalar`
-backend (of our one implementation, for ECDH). (`descmp` does not split: Go's
+backend (of our one implementation, for ECDH and ECDSA). (`descmp` does not split: Go's
 `crypto/des` is portable code on every platform, so it has one run.) The ECDH
 one also checks its inputs, with the NIST and RFC 7748 vectors and with the
 chained exchanges of `src/ecdh/keypair.rs`, so a broken build fails instead of
-passing as a figure. `make bench-go` runs them all, and so does the manual `Benchmarks`
+passing as a figure, and the ECDSA one does the same with the signatures of
+RFC 6979, the chained signatures of `src/ecdsa/keypair.rs` and the randomized
+signatures of `src/ecdsa/vectors.rs`, which Go made. `make bench-go` runs them all, and so does the manual `Benchmarks`
 workflow (`.github/workflows/bench.yml`) on GitHub's x86-64 and Arm runners.
 
 ## Adding or implementing an algorithm
@@ -190,8 +217,23 @@ Wycheproof's cases in `vectors.rs`), `rejects_invalid_private_keys` and `rejects
 recomputes in Go), the `generate_*` tests with a scripted reader, `encoding_lengths`, `equality_and_cloning`,
 `dropping_wipes_the_secrets`, `debug_hides_the_secrets`, `curve::tests::errors_say_what_went_wrong` and `throughput`. Under it, each layer checks itself against
 something that does not share its code: `field.rs` against integers computed in Python and, for one limb, `u128`;
-`nist.rs` against the relations that define a curve and against the generic multiplication (the table of multiples of
-the generator); `fe25519.rs` and the X25519 ladder against the generic field and the ladder written on it.
+`src/ec/nist.rs` against the relations that define a curve and against the generic multiplication (the table of multiples of
+the generator); `fe25519.rs` and the X25519 ladder against the generic field and the ladder written on it. Those layers
+are in `src/ec/` now, so `cargo test -- ecdh:: ec::` runs all of ECDH's tests, and `cargo test -- ecdsa:: ec::` all of ECDSA's.
+
+ECDSA's tests are `rfc_6979_known_answers` (the 40 signatures of the RFC, through the whole API) and
+`hmac_drbg::tests::rfc_6979_nonces` (the `k` of each), `wycheproof` (the selection in `vectors.rs`, with the DER and
+the `r || s` forms), `nist_cavp_signature_verification`, `deterministic_key_generation_vectors` (c2sp.org/det-keygen),
+`hedged_known_answers` (another implementation of the same construction, given the same random bytes),
+`chained_signatures` (rounds of derived keys signing the state, with values from OpenSSL, which `bench/ecdsacmp`
+recomputes in Go), `signatures_verify_and_only_those`, `digests_of_any_length` and `the_message_and_digest_forms_agree`,
+`digests_that_are_not_digests`, `a_failing_random_source_is_reported`, `rejects_invalid_private_keys`,
+`rejects_invalid_public_keys` and `rejects_invalid_signatures`, `edge_scalars_are_keys`, the `generate_*` tests with a
+scripted reader, `encoding_lengths` and `der_sizes_are_the_documented_ones`, `equality_and_cloning`, `dropping_wipes_the_private_key`,
+`debug_hides_the_secrets`, `algorithm::tests::*` (the digest rules, the retry for a zero `s` that a random nonce never
+reaches, and the panic for a generator that never gives a number), `hmac_drbg::tests::*` (the layout of the seed), `der::tests::*`
+(every way to write a signature that is not the one DER prescribes, and the length at which the long form starts),
+`curve::tests::errors_say_what_went_wrong` and `throughput`.
 
 A cipher with a single implementation has no backend to compare, so `src/des/` swaps
 `scalar_known_answers`, `matches_scalar_backend` and `unaligned_input` for

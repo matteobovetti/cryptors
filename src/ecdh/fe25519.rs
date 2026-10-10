@@ -18,7 +18,7 @@
 //! None of it depends on the value of a number: every function does the same
 //! operations whatever its inputs are, and there is no table.
 
-use super::ct;
+use crate::ec::ct;
 use core::ops::{Add, Mul, Sub};
 
 const LOW_51_BITS: u64 = (1 << 51) - 1;
@@ -268,8 +268,8 @@ impl Mul for Fe {
 
 #[cfg(test)]
 mod tests {
-    use super::super::field::{Fe as Generic, Modulus};
     use super::*;
+    use crate::ec::field::{Fe as Generic, Modulus};
     use crate::{Digest, sha2::Sha512};
 
     /// `2^255 - 19` in the generic Montgomery field, which this module is

@@ -12,9 +12,9 @@
 //! both of the two points it carries are added and doubled, and which one is
 //! which is decided by swapping them under a mask, not by a branch.
 
-use super::ct;
 use super::curve::{Curve, Error, sealed::Sealed};
 use super::fe25519::Fe;
+use crate::ec::ct;
 use crate::wipe::wipe;
 
 /// The curve Curve25519 with the function X25519 of RFC 7748: private keys,
@@ -178,8 +178,8 @@ mod tests {
     /// The same ladder on the generic Montgomery field, which shares no
     /// arithmetic with the real one.
     mod generic {
-        use super::super::super::ct;
-        use super::super::super::field::{Fe, Modulus};
+        use crate::ec::ct;
+        use crate::ec::field::{Fe, Modulus};
 
         struct Prime;
         impl Modulus<4> for Prime {

@@ -1,4 +1,5 @@
-//! Arithmetic modulo a prime, for the four primes of this module.
+//! Arithmetic modulo a prime: the primes of the NIST curves and of Curve25519,
+//! and the orders of the NIST curves, which are primes too.
 //!
 //! A number is kept as `N` little-endian 64-bit limbs in Montgomery form: the
 //! number `x` is stored as `x * R mod p`, with `R = 2^(64 * N)`. Adding and
@@ -9,9 +10,11 @@
 //! limbs, and the same few functions then serve a prime of any size and shape.
 //!
 //! Everything here is branch-free and indexes memory only by public values,
-//! with two exceptions that handle public data: parsing an encoded number
-//! rejects one that is not below `p` as soon as it sees it, and the inversion
-//! follows the bits of `p - 2`, which is a constant.
+//! with two exceptions: parsing an encoded number rejects one that is not below
+//! `p` as soon as it sees it (it is called on public numbers, and on private keys
+//! and nonces that were checked to be in range, so for those the branch always goes
+//! the same way), and the inversion follows the bits of `p - 2`, which is a
+//! constant.
 //!
 //! The constants a field needs (`R mod p`, `R^2 mod p` and `-p^-1 mod 2^64`) are
 //! computed from the prime at compile time, and so are the curve constants that
@@ -22,7 +25,7 @@ use core::marker::PhantomData;
 use core::ops::{Add, Mul, Sub};
 
 /// The prime of a field.
-pub(super) trait Modulus<const N: usize>: 'static {
+pub(crate) trait Modulus<const N: usize>: 'static {
     /// The prime, as `N` little-endian limbs. It must be odd, and its top limb
     /// must not be zero.
     const P: [u64; N];
@@ -207,7 +210,7 @@ const fn bit_len<const N: usize>(p: &[u64; N]) -> usize {
 }
 
 /// An element of the field of integers modulo `M::P`.
-pub(super) struct Fe<M: Modulus<N>, const N: usize> {
+pub(crate) struct Fe<M: Modulus<N>, const N: usize> {
     /// `x * R mod p`, below `p`.
     limbs: [u64; N],
     modulus: PhantomData<M>,
@@ -237,21 +240,21 @@ impl<M: Modulus<N>, const N: usize> Fe<M, N> {
     };
 
     /// The length in bytes of the big-endian encoding of an element.
-    pub(super) const BYTES: usize = bit_len(&M::P).div_ceil(8);
+    pub(crate) const BYTES: usize = bit_len(&M::P).div_ceil(8);
 
-    pub(super) const ZERO: Self = Self {
+    pub(crate) const ZERO: Self = Self {
         limbs: [0; N],
         modulus: PhantomData,
     };
 
-    pub(super) const ONE: Self = Self {
+    pub(crate) const ONE: Self = Self {
         limbs: Self::R,
         modulus: PhantomData,
     };
 
     /// The element with the value `limbs`, which must be below `p`. Usable in
     /// constants: a value that is out of range fails to compile.
-    pub(super) const fn from_limbs(limbs: [u64; N]) -> Self {
+    pub(crate) const fn from_limbs(limbs: [u64; N]) -> Self {
         let (_, borrow) = sub_limbs(&limbs, &M::P);
         assert!(borrow == 1, "value is not below the modulus");
         Self {
@@ -262,7 +265,7 @@ impl<M: Modulus<N>, const N: usize> Fe<M, N> {
 
     /// The element congruent to `limbs`, which must be below `2 * p`.
     #[cfg(test)]
-    pub(super) fn from_limbs_below_double(limbs: [u64; N]) -> Self {
+    pub(crate) fn from_limbs_below_double(limbs: [u64; N]) -> Self {
         let (reduced, borrow) = sub_limbs(&limbs, &M::P);
         Self::from_limbs(select_limbs(ct::mask(borrow ^ 1), &reduced, &limbs))
     }
@@ -270,7 +273,7 @@ impl<M: Modulus<N>, const N: usize> Fe<M, N> {
     /// The element with the value of the big-endian encoding `bytes`, or
     /// `None` if `bytes` is not exactly `BYTES` long or encodes a number that
     /// is not below `p`. The encoding is public, so this does not hide which.
-    pub(super) fn from_be_bytes(bytes: &[u8]) -> Option<Self> {
+    pub(crate) fn from_be_bytes(bytes: &[u8]) -> Option<Self> {
         if bytes.len() != Self::BYTES {
             return None;
         }
@@ -285,8 +288,31 @@ impl<M: Modulus<N>, const N: usize> Fe<M, N> {
         Some(Self::from_limbs(limbs))
     }
 
+    /// The element congruent to the big-endian number `bytes`, which has at
+    /// most `BYTES` bytes, or `None` if the number is not below `2 * p`. That
+    /// is the case of a number whose bit length is the prime's: one conditional
+    /// subtraction reduces it. How long the number is is public; its value is
+    /// not revealed.
+    pub(crate) fn from_be_bytes_below_double(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() > Self::BYTES {
+            return None;
+        }
+        let mut limbs = [0u64; N];
+        for (i, &byte) in bytes.iter().rev().enumerate() {
+            limbs[i / 8] |= u64::from(byte) << (8 * (i % 8));
+        }
+        let (reduced, borrow) = sub_limbs(&limbs, &M::P);
+        let value = select_limbs(ct::mask(borrow ^ 1), &reduced, &limbs);
+        // Still not below `p`: the number was at least `2 * p`.
+        let (_, still_above) = sub_limbs(&value, &M::P);
+        if still_above == 0 {
+            return None;
+        }
+        Some(Self::from_limbs(value))
+    }
+
     /// Writes the value as a big-endian number of exactly `BYTES` bytes.
-    pub(super) fn write_be_bytes(&self, out: &mut [u8]) {
+    pub(crate) fn write_be_bytes(&self, out: &mut [u8]) {
         assert_eq!(out.len(), Self::BYTES);
         let mut one = [0; N];
         one[0] = 1;
@@ -299,7 +325,7 @@ impl<M: Modulus<N>, const N: usize> Fe<M, N> {
 
     /// 1 if the element is zero and 0 otherwise.
     #[inline(always)]
-    pub(super) fn is_zero(&self) -> u64 {
+    pub(crate) fn is_zero(&self) -> u64 {
         let mut acc = 0;
         for limb in self.limbs {
             acc |= limb;
@@ -309,7 +335,7 @@ impl<M: Modulus<N>, const N: usize> Fe<M, N> {
 
     /// 1 if the elements are equal and 0 otherwise.
     #[inline(always)]
-    pub(super) fn eq(&self, other: &Self) -> u64 {
+    pub(crate) fn eq(&self, other: &Self) -> u64 {
         let mut acc = 0;
         for (a, b) in self.limbs.iter().zip(&other.limbs) {
             acc |= a ^ b;
@@ -319,7 +345,7 @@ impl<M: Modulus<N>, const N: usize> Fe<M, N> {
 
     /// `a` where `mask` is all ones and `b` where it is all zeros.
     #[inline(always)]
-    pub(super) fn select(mask: u64, a: &Self, b: &Self) -> Self {
+    pub(crate) fn select(mask: u64, a: &Self, b: &Self) -> Self {
         Self {
             limbs: select_limbs(mask, &a.limbs, &b.limbs),
             modulus: PhantomData,
@@ -327,13 +353,13 @@ impl<M: Modulus<N>, const N: usize> Fe<M, N> {
     }
 
     #[inline(always)]
-    pub(super) fn square(&self) -> Self {
+    pub(crate) fn square(&self) -> Self {
         *self * *self
     }
 
     /// `-self`.
     #[cfg(test)]
-    pub(super) fn neg(&self) -> Self {
+    pub(crate) fn neg(&self) -> Self {
         Self::ZERO - *self
     }
 
@@ -342,7 +368,7 @@ impl<M: Modulus<N>, const N: usize> Fe<M, N> {
     ///
     /// The exponent is a constant, so this follows its bits with a four-bit
     /// window: neither the loop nor the table index depends on `self`.
-    pub(super) fn invert(&self) -> Self {
+    pub(crate) fn invert(&self) -> Self {
         let mut table = [Self::ONE; 16];
         for i in 1..16 {
             table[i] = table[i - 1] * *self;
@@ -702,6 +728,53 @@ mod tests {
             assert_eq!(to_hex(x.square()), to_hex(x * x), "{a}^2");
             assert_eq!(to_hex(x.invert()), *inverse, "1 / {a}");
         }
+    }
+
+    /// `from_be_bytes_below_double` reduces what is below `2 * p` with one
+    /// subtraction, and refuses the rest: a number of more bytes than the prime has,
+    /// and one of the same length that is at least `2 * p`. 2^255 - 19 has room for
+    /// both kinds in 32 bytes: 2p = 2^256 - 38.
+    #[test]
+    fn below_double_takes_what_one_subtraction_reduces() {
+        type F = Fe<P25519, 4>;
+        let bytes = |value: &str| hex(value, 32);
+
+        // Below p, as it is; p itself, which is zero; and up to 2p - 1.
+        assert_eq!(
+            to_hex(F::from_be_bytes_below_double(&bytes("05")).unwrap()),
+            hex_of("05")
+        );
+        let p = "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffed";
+        assert!(F::from_be_bytes_below_double(&bytes(p)).unwrap().is_zero() == 1);
+        let p_plus_5 = "7ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff2";
+        assert_eq!(
+            to_hex(F::from_be_bytes_below_double(&bytes(p_plus_5)).unwrap()),
+            hex_of("05")
+        );
+        let two_p_minus_1 = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffd9";
+        assert_eq!(
+            to_hex(F::from_be_bytes_below_double(&bytes(two_p_minus_1)).unwrap()),
+            "7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffec"
+        );
+
+        // 2p and everything above it, up to the largest 32-byte number.
+        let two_p = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffda";
+        assert!(F::from_be_bytes_below_double(&bytes(two_p)).is_none());
+        assert!(F::from_be_bytes_below_double(&[0xff; 32]).is_none());
+
+        // A shorter number is padded on the left; a longer one is refused.
+        assert_eq!(
+            to_hex(F::from_be_bytes_below_double(&[5]).unwrap()),
+            hex_of("05")
+        );
+        assert!(F::from_be_bytes_below_double(&[]).unwrap().is_zero() == 1);
+        assert!(F::from_be_bytes_below_double(&[0; 33]).is_none());
+        assert!(Fe::<Small, 1>::from_be_bytes_below_double(&[0; 9]).is_none());
+    }
+
+    /// The 32-byte hex of `value`, for comparing with `to_hex`.
+    fn hex_of(value: &str) -> String {
+        format!("{value:0>64}")
     }
 
     #[test]

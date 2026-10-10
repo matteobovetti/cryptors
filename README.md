@@ -24,9 +24,8 @@ This library supports the following algorithms and packages:
 | AES | [FIPS 197](https://csrc.nist.gov/pubs/fips/197/final): Advanced Encryption Standard (AES-128, AES-192 and AES-256) | Implemented |
 | DES | [FIPS 46-3](https://csrc.nist.gov/pubs/fips/46-3/final): Data Encryption Standard and Triple DES (TDEA), withdrawn in 2005 and kept for legacy data | Implemented |
 | ECDH | [NIST SP 800-56A Rev. 3](https://csrc.nist.gov/pubs/sp/800/56/a/r3/final) and [RFC 7748](https://www.rfc-editor.org/info/rfc7748): Elliptic Curve Diffie-Hellman over P-256, P-384, P-521 and Curve25519 (X25519) | Implemented |
-| ECDSA | FIPS 186-5: Elliptic Curve Digital Signature Algorithm | Planned |
+| ECDSA | [FIPS 186-5](https://csrc.nist.gov/pubs/fips/186-5/final) and [RFC 6979](https://www.rfc-editor.org/info/rfc6979): Elliptic Curve Digital Signature Algorithm over P-224, P-256, P-384 and P-521, randomized and deterministic | Implemented |
 | Ed25519 | Ed25519 signature algorithm | Planned |
-| Elliptic Curves | NIST P-224, P-256, P-384, and P-521 elliptic curves | Planned |
 | HKDF | RFC 5869: HMAC-based Extract-and-Expand Key Derivation Function | Planned |
 | HMAC | FIPS 198: Keyed-Hash Message Authentication Code | Planned |
 | HPKE | RFC 9180: Hybrid Public Key Encryption | Planned |
@@ -116,6 +115,12 @@ build uses plain `mulq`: the `mulx` and `adcx`/`adox` instructions of BMI2 and A
 uses, are not in the x86-64 baseline, and a backend that used them behind a run-time check is not written. See the
 Benchmarking part of [ECDH](#ecdh) for what that costs where it can be measured.
 
+ECDSA is built on the same arithmetic as ECDH, with the order of the curve as the modulus where ECDH has the prime, and
+has the same answer: one portable implementation and no row in the tables above. The one place it meets a primitive
+that has hardware is the hash. The generator of the per-message secret number is an HMAC_DRBG, and it hashes with SHA-512
+in a randomized signature and with the `Digest` it is given in a deterministic one, so the SHA-256 and SHA-512 backends of
+the tables above are the ones it runs on where the CPU has them. See the Benchmarking part of [ECDSA](#ecdsa).
+
 ### Multi-buffer SIMD, where no instruction exists
 
 Not every algorithm has silicon behind it on every target. **No shipping CPU implements MD5**, and no x86 CPU
@@ -193,10 +198,10 @@ available.
 There are two other uses. One is an empty block of inline assembly in SHA-256's two aarch64 backends, scalar and
 FEAT_SHA256. It emits no instruction, touches no memory, and only stops the compiler from rearranging equivalent
 arithmetic into a slower order (`src/sha2/sha256/scalar.rs` and `src/sha2/sha256/aarch64.rs`). The other is the
-volatile write that overwrites an AES or DES cipher's round keys, or an ECDH private key or shared secret, with zeros when
-it is dropped, which the compiler would otherwise delete as a store nobody reads (`src/aes/schedule.rs`,
-`src/des/schedule.rs` and, for ECDH, `src/wipe.rs`). Outside its tests, ECDH has no intrinsics and nothing else that is
-`unsafe`.
+volatile write that overwrites an AES or DES cipher's round keys, or an ECDH or ECDSA private key or ECDH shared secret,
+with zeros when it is dropped, which the compiler would otherwise delete as a store nobody reads (`src/aes/schedule.rs`,
+`src/des/schedule.rs` and, for ECDH and ECDSA, `src/wipe.rs`). Outside its tests, neither ECDH nor ECDSA has intrinsics
+or anything else that is `unsafe`.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -217,6 +222,11 @@ cryptors
 │   ├── PrivateKey, PublicKey,       generic over the curve, so keys of two curves cannot be mixed
 │   │   SharedSecret
 │   ├── P256, P384, P521, X25519     the curves, which implement the sealed trait `Curve`
+│   └── Error
+├── ecdsa                            signatures: neither a hash nor a cipher either, so it has its own types
+│   ├── PrivateKey, PublicKey,       generic over the curve, so a key and a signature of two curves cannot be mixed
+│   │   Signature
+│   ├── P224, P256, P384, P521       the curves, which implement the sealed trait `Curve` (ecdh has three of these types)
 │   └── Error
 ├── md5
 │   └── Md5
@@ -279,6 +289,11 @@ Key agreement is neither of those. ECDH has no digest and no block, so its keys 
 `PrivateKey<C>` and a `PublicKey<C>`, generic over the curve `C` (`P256`, `P384`, `P521` or `X25519`, which implement
 the sealed trait `Curve`), and a `SharedSecret<C>` as the result of an exchange. Because the curve is a type, a private
 key of one curve and a public key of another do not compile together. See [ECDH](#ecdh).
+
+Signatures are not either. ECDSA signs a digest, but it needs the hash for more than that (the choice of the hash is the
+caller's, and the generator of the per-message secret number is built on it), so the hash is a type parameter:
+`key.sign::<Sha256, _>(&mut rng, message)` takes any `D: Digest`, and `public.verify::<Sha256>(message, &signature)` has
+to name the same one. The keys and the `Signature<C>` are generic over the curve, as in ECDH. See [ECDSA](#ecdsa).
 
 ## AES
 
@@ -742,7 +757,7 @@ Six things to know when using it:
 ### Testing
 
 ```sh
-cargo test ecdh::   # known answers, Wycheproof, chained exchanges against OpenSSL, and the arithmetic against references
+cargo test -- ecdh:: ec::   # known answers, Wycheproof, chained exchanges against OpenSSL, and the arithmetic against references
 ```
 
 The known-answer tests include the vectors of NIST's CAVS for the three curves (the ones Go's tests use) and those of
@@ -834,6 +849,252 @@ of the multiplications of a squaring), a reduction written for the shape of each
 shifts and additions, with no Montgomery step at all), signed windows (half the table), and, on x86-64, a backend for
 BMI2 and ADX behind a run-time check, which is what the fastest x86 big-number code relies on. Nothing here can run that
 one to see what it would gain.
+
+No x86 figures are given yet, for the same reason as the others: nothing here can time real x86 hardware, and Rosetta 2
+translates the instructions, so its timings say nothing about an x86 CPU. The manual `Benchmarks` workflow
+(`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
+
+## ECDSA
+
+ECDSA, the Elliptic Curve Digital Signature Algorithm, lets the holder of a private key sign a message so that anyone with
+the matching public key can check that the signature is of that message and was made by that holder, and nobody without the
+private key can make one. It is what signs most X.509 certificates, TLS handshakes and JSON Web Tokens (`ES256`, `ES384`,
+`ES512`). It is neither a hash nor a cipher, so it implements neither `Digest` nor `BlockCipher`: keys and signatures are
+types of their own, generic over the curve, and the curve is one of four types that implement the sealed trait `Curve`. The
+hash is a type parameter of the functions that sign and verify a message, because the choice of it is the caller's.
+
+| Curve | Type | Private key | Public key | Signature `r \|\| s` | Signature in DER | Security |
+|-------|------|-------------|------------|---------------------|------------------|----------|
+| NIST P-224 | `P224` | 28 bytes | 57 bytes | 56 bytes | 8 to 64 bytes | 112 bits |
+| NIST P-256 | `P256` | 32 bytes | 65 bytes | 64 bytes | 8 to 72 bytes | 128 bits |
+| NIST P-384 | `P384` | 48 bytes | 97 bytes | 96 bytes | 8 to 104 bytes | 192 bits |
+| NIST P-521 | `P521` | 66 bytes | 133 bytes | 132 bytes | 8 to 139 bytes | 256 bits |
+
+The curves are defined in [NIST SP 800-186](https://csrc.nist.gov/pubs/sp/800/186/final) and
+[SEC 2](https://www.secg.org/sec2-v2.pdf), the algorithm in [FIPS 186-5](https://csrc.nist.gov/pubs/fips/186-5/final)
+(section 6), and the deterministic signature in [RFC 6979](https://www.rfc-editor.org/info/rfc6979). A public key is an
+uncompressed point ([SEC 1](https://www.secg.org/sec1-v2.pdf), section 2.3.3), as in ECDH, and is validated when it is
+turned into a `PublicKey`. A signature is written two ways: `r || s` with each number as long as a private key (the form
+of IEEE P1363, JSON Web Signature and COSE), and the ASN.1 DER `SEQUENCE { r INTEGER, s INTEGER }` of
+[RFC 3279](https://www.rfc-editor.org/info/rfc3279) (section 2.2.3) and SEC 1 (annex C.5), which X.509 and TLS carry.
+Reading DER is strict: one encoding of each pair of numbers is accepted and nothing else. P-224 is here, unlike in ECDH,
+because FIPS 186-5 includes it and Go's `crypto/ecdsa` supports it; it is the least secure of the four.
+
+A signature needs a secret number `k` for each message, and the private key follows from a repeated `k`, or from one that
+is partly predictable. There are two ways to get it, and both are here, each as a function of the message and of its
+digest: a **randomized** signature (`sign`, `sign_prehash`) takes random bytes from any `std::io::Read`, mixes them with the
+private key and the digest, and gives a different signature each time; a **deterministic** one (`sign_deterministic`,
+`sign_prehash_deterministic`) takes `k` from the key and the digest alone, as RFC 6979 does, and gives the same signature
+each time. The standard library has no secure random source that is stable and the `Rand` item above is still planned, so
+key generation and the randomized signature take a reader, as in ECDH.
+
+### Usage
+
+```rust
+use cryptors::ecdsa::{Error, P256, PrivateKey, PublicKey, Signature};
+use cryptors::sha2::Sha256;
+
+fn unhex(s: &str) -> Vec<u8> {
+    (0..s.len() / 2).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap()).collect()
+}
+
+// RFC 6979, appendix A.2.5: a P-256 key, and the deterministic signature of "sample" with SHA-256.
+let key = PrivateKey::<P256>::from_bytes(&unhex(
+    "c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721",
+)).unwrap();
+let signature = key.sign_deterministic::<Sha256>(b"sample");
+assert_eq!(
+    signature.as_bytes(),
+    unhex(concat!(
+        "efd48b2aacb6a8fd1140dd9cd45e81d69d2c877b56aaf991c34d0ea84eaf3716",
+        "f7cb1c942d657c41d436c7a1b6e29f65f3e900dbb9aff4064dc4ab2f843acda8"
+    ))
+);
+
+// The verifier has the public key and the signature as bytes (this is where a bad key or a bad encoding is refused)...
+let public = PublicKey::<P256>::from_bytes(key.public_key().as_bytes()).unwrap();
+let received = Signature::<P256>::from_der(&signature.to_der()).unwrap();
+
+// ...and checks the signature against the message.
+assert_eq!(public.verify::<Sha256>(b"sample", &received), Ok(()));
+assert_eq!(public.verify::<Sha256>(b"sampled", &received), Err(Error::VerificationFailed));
+```
+
+Real keys come from `PrivateKey::generate`, and the randomized signature takes random bytes too, from a source of your own:
+
+```rust
+use cryptors::ecdsa::{P384, PrivateKey};
+use cryptors::sha2::Sha384;
+use std::fs::File;
+
+let mut rng = File::open("/dev/urandom")?;                 // on Unix; any io::Read of random bytes will do
+let key = PrivateKey::<P384>::generate(&mut rng)?;
+let signature = key.sign::<Sha384, _>(&mut rng, b"a message")?;
+// Send key.public_key().as_bytes(), the message and signature.to_der() to the other side.
+```
+
+`examples/ecdsa.rs` runs a complete round on each of the four curves, with a randomized and a deterministic signature, a
+changed message and a changed signature: `cargo run --release --example ecdsa`.
+
+### Security
+
+None of the four curves is broken. The best known attacks take about the square root of the size of the group, which NIST
+rates (SP 800-57) at 112, 128, 192 and 256 bits of security for P-224, P-256, P-384 and P-521. A large quantum computer
+would break all four, by Shor's algorithm, and a signature that has to stay trustworthy after one exists needs a
+post-quantum scheme such as ML-DSA, which is also on the list above, alongside or instead.
+
+Seven things to know when using it:
+
+- **Everything rests on `k`.** From a signature, `d = (s * k - e) / r`, so whoever learns `k` has the private key, two
+  signatures that share a `k` give it away, and so do many whose `k` have a few bits in common (a lattice attack). The
+  randomized signature mixes the random bytes with the private key and the digest in an HMAC_DRBG, following
+  draft-irtf-cfrg-det-sigs-with-noise (section 4) except that the generator always runs on SHA-512, where the draft uses the
+  hash of the signature, which a digest does not say. A reader that repeats or is predictable costs the randomization and
+  not the key: the result is then as strong as a deterministic signature. The deterministic one needs no reader at all.
+  What it gives up is protection against faults: someone who can make one of two computations of the same signature fail
+  gets two results that share a `k`, which the randomized form prevents. Neither protects against an attacker who can skip
+  instructions.
+- **The randomness is the caller's.** `generate` is only as good as the reader it is given, and a predictable one makes
+  every key it produced guessable. For a signature the reader has to be secret and made by a cryptographically secure
+  generator, but it does not have to be perfect.
+- **Pick the hash on purpose.** FIPS 186-5 approves the SHA-2 and SHA-3 families, recommends one as strong as the curve,
+  and says one that is weaker "shall not be used" (section 6.1.1): SHA-256 for P-224 and P-256, SHA-384 for P-384, SHA-512
+  for P-521. This crate does not stop you from naming another `Digest`, SHA-1 and MD5 included, and the signature is then
+  as weak as that choice. The verifier has to use the same hash as the signer. SHA-3 is not a `Digest` yet, and its output
+  goes through the `_prehash` functions.
+- **A signature is not unique.** If `(r, s)` is a signature then so is `(r, n - s)`, and anyone can make the second from the
+  first without the key. Both are signatures of the same message, so it is not a forgery, but a program that identifies a
+  signature by its bytes (a transaction identifier, a cache key) must not assume there is only one.
+- **A key is for signing and for nothing else.** FIPS 186-5 (sections 6 and 6.2) says so. The keys of this module are types of
+  their own, so an ECDH key cannot be handed to it by accident.
+- **The arithmetic is written not to depend on secrets, and that is checked in one way only.** No branch condition or memory
+  address is derived from the private key or from `k`: `k * G` goes through a table lookup that reads every entry, the
+  inverse of `k` is a power with a fixed exponent, and the formulas are complete and the choices are made by masks, as in
+  ECDH. The assembly `rustc` produced for `aarch64` and `x86_64` was inspected, and the conditional jumps in the code that
+  signs are loops over public numbers of limbs, windows, bytes or bits of a fixed exponent; checks of public lengths; checks
+  that a result which cannot fail did not; the choice to draw another candidate for `k`, which depends on the candidates
+  that were refused and not on the one that was accepted; and the test of whether `r` or `s` is zero, true with a
+  probability of about `1/n`, between 2^-224 and 2^-521 depending on the curve. That is one compiler's output for two targets, with no timing measurement on real hardware
+  behind it, and nothing protects against attacks that read power consumption or inject faults. Verifying handles no
+  secret, and its time depends on its inputs.
+- **Keys stay in memory for as long as they exist.** A private key is overwritten with zeros when dropped, and `Debug` does
+  not print it. That is best effort: the working values of the arithmetic (numbers that depend on a key, on the stack and in
+  registers while it is in use) are not overwritten, and neither is the copy that moving a key (into a `Box` or a `Vec`,
+  say) can leave behind where it was.
+
+### Testing
+
+```sh
+cargo test -- ecdsa:: ec::   # known answers, Wycheproof, CAVP, chained signatures against OpenSSL, and the arithmetic against references
+```
+
+The known-answer tests are the 40 signatures of RFC 6979, appendix A.2 (five hashes, two messages, four curves), which the
+deterministic signature has to reproduce bit for bit, and the per-message secret `k` of each, which the HMAC_DRBG has to
+reproduce too. The rest of the confidence comes from other kinds of test:
+
+- **Project Wycheproof.** The 21 of its ECDSA files that these curves and hashes use (`ecdsa_secp224r1_sha224_test.json`
+  and the others for P-256, P-384 and P-521 with SHA-2 and SHA-3, and the `_p1363` ones) hold 9,767 cases: arithmetic edge
+  cases (a `u1` or `u2` that is zero or the largest value, points that double, the modular inverse at its edge, small and
+  huge `r` and `s`), public keys with special coordinates, every way to write a signature in DER that is not the right one
+  (BER lengths, extra bytes, padded and negative integers, wrong tags), and digests chosen to be special values. All of them
+  were run once and passed. 293 are in the tests: all the kinds of fault on every curve, with the full set of encoding faults
+  on P-256 and P-521, where the length rules differ the most.
+- **NIST's CAVP.** The signature verification vectors of CAVS 11.0, 300 for these curves with SHA-1 to SHA-512, a passing
+  signature, or one with the message, `r`, `s` or the key changed. All of them were run once, and 40 are in the tests: a passing signature and a failing one for every pair of curve and hash.
+- **Key generation.** The deterministic vectors of [c2sp.org/det-keygen](https://c2sp.org/det-keygen), 21 seeds for the four
+  curves, among them the P-256 seed that makes the first candidate overflow the order, and the P-521 ones whose candidates
+  are cut to 521 bits.
+- **Chained signatures.** Rounds of a key derived from the state signing the state, each round seeded by the hash of the
+  last, for 16 rounds on each curve. The final values come from OpenSSL, and `bench/ecdsacmp` recomputes them with Go's
+  `crypto/ecdsa`; the three agree.
+- **Another implementation of the randomized signature.** Go's, given the same key, digest and random bytes, makes the same
+  DER signature as this crate for digests shorter than, as long as and longer than the order, on all four curves.
+- **Mutation testing.** 67 small changes to the code (a constant, an operand, a dropped check, a flipped comparison) in
+  the signing and verifying code, the generator, the DER reader and the arithmetic modulo the order, each applied to a
+  scratch copy: 62 make a test fail, 1 does not compile, and 4 survive. One of the four changes nothing (a control that
+  shows the harness can tell). Two are the handling of `r = 0` in signing and in verifying: a `k` that gives `r = 0` is one
+  whose point has an x-coordinate of 0 or equal to the order (P-256, P-384 and P-521 have such points, P-224 has none),
+  and nobody knows the discrete logarithm of one, and a signature with `r = 0` is rejected anyway, so no input reaches
+  the difference (a zero `s` is reached on purpose and tested). The fourth is the
+  overwriting of a scratch buffer, which cannot be observed. The first run had ten survivors; six were gaps in the tests
+  (a DER length written in the long form where the short one fits, an `s` wider than a private key, the length at which the
+  long form begins, the padding of the generator's input when it already ends on a block boundary, and the two refusals of
+  the reduction modulo the order), and tests now kill them; a later one showed that nothing pinned the number of refused
+  candidates in a row that signing puts up with, and a test does now.
+
+The tests also cover the other behaviour of the API: that a digest longer than the order is cut to its leftmost bits (and
+P-521's seven spare bits), that an empty or wrongly sized digest is refused, that a failing reader is reported and `generate`
+gives up on a stuck one, that the branch of the algorithm a random `k` never reaches (a zero `s`) draws another `k`, that
+every malformed signature is refused with the same error whether it is DER or `r || s`, that `Debug` shows no secret, and
+that a private key leaves nothing behind after it is dropped.
+
+### Benchmarking
+
+```sh
+# cryptors: one test thread, so the benchmarks don't compete with each other for the CPU.
+cargo test --release ecdsa:: -- --ignored --nocapture --test-threads=1
+cd bench/ecdsacmp && go test -v -run TestThroughput               # Go's crypto/ecdsa as shipped, with its assembly
+cd bench/ecdsacmp && go test -tags purego -v -run TestThroughput  # Go's portable code, with no assembly
+```
+
+Both sides time the five operations of a signer and a verifier, on the same key and digest: building a private key from its
+bytes (which derives the public key: a multiplication of the generator), building a public key from its bytes (which checks
+that the point is on the curve), a randomized signature, a deterministic one, and the verification of a signature. The
+signatures are DER, which is what a program sends and receives, so writing and reading it is part of the work. Each runs for
+about 50 ms to size a batch of about 100 ms, and the best of five batches is reported. The message is hashed once, outside
+the timed calls, with SHA-256 for P-224 and P-256, SHA-384 for P-384 and SHA-512 for P-521. The randomized signature reads
+its random bytes from a cheap generator on both sides (Go's `GODEBUG=cryptocustomrand=1` makes it use the reader it is
+given), so the cost of the system random source is on neither. Key generation is not timed. Both print the first 8 bytes
+of the deterministic signature, and all three runs print the same.
+
+On an Apple M1 Pro, against Go 1.27.1's `crypto/ecdsa` on the same machine (medians of five interleaved runs, in
+microseconds per operation, lower is better):
+
+| Operation | cryptors | Go stdlib | Go portable (`purego`) |
+|-----------|----------|-----------|------------------------|
+| P-224 new private key | **30.9** | 33.6 | 33.6 |
+| P-224 sign | **44.1** | 61.3 | 67.6 |
+| P-224 sign deterministic | **41.5** | 58.5 | 63.3 |
+| P-224 verify | **148.8** | 156.0 | 155.8 |
+| P-256 new private key | 32.7 | **11.8** | 27.5 |
+| P-256 sign | 47.8 | **24.1** | 45.9 |
+| P-256 sign deterministic | 44.6 | **21.3** | 42.2 |
+| P-256 verify | 153.4 | **58.4** | 142.4 |
+| P-384 new private key | 106.7 | **105.8** | 105.9 |
+| P-384 sign | **138.5** | 167.9 | 174.0 |
+| P-384 sign deterministic | **135.1** | 167.4 | 173.9 |
+| P-384 verify | 506.9 | **487.6** | 495.0 |
+| P-521 new private key | **270.2** | 279.5 | 280.8 |
+| P-521 sign | **348.6** | 414.2 | 422.8 |
+| P-521 sign deterministic | **347.6** | 413.1 | 421.0 |
+| P-521 verify | 1346.9 | 1344.8 | **1342.8** |
+
+Building a public key takes 0.1 to 0.5 µs for these curves here and 0.2 to 1.0 µs in Go. Run-to-run spread was within about
+5% in every cell above, but the machine was not idle (a desktop on battery, load average 4 to 6, with another benchmark
+running in a different workspace), so the last digit means little.
+
+Per curve:
+
+- **P-224, P-384 and P-521: signing is 16% to 29% faster than Go's, and verifying is level with it.** Go has no assembly for
+  these curves, so this is portable code against portable code. Signing is a multiplication of the generator plus the rest
+  of the work (the inverse modulo the order, the conversion of the point, the nonce generator, the DER), and the first of
+  those is the "new private key" row, which is level on both sides. So the whole difference is in the rest: 31.8 µs for
+  this crate and 62.1 for Go on P-384, 78.4 and 134.7 on P-521, 13.2 and 27.7 on P-224. No profile was taken, so this does
+  not say which part of it.
+- **P-256: 4% to 6% behind Go's portable code on signing, 8% on verifying, and 2.0x to 2.1x and 2.6x behind its assembly.**
+  Go has assembly for P-256 on arm64 (and on amd64, ppc64le and s390x), including a multiplication of the generator, which
+  is most of a signature. The `purego` column is the fair one.
+- **Verifying takes 3.4 to 3.9 times a deterministic signature,** because it multiplies a point that is not the generator,
+  and builds the table of its 15 multiples each time, besides the generator. Nothing in it is secret.
+- **The randomized signature costs 1 to 3.4 µs more than the deterministic one:** the private key and the digest each go into
+  a block of the HMAC_DRBG of their own, which runs on SHA-512 whatever the curve is.
+
+What would make it faster, none of it done: verifying handles no secret, so it can use methods that are not constant time,
+a joint multiplication of `u * G + v * Q` that shares the doublings, signed digits, and a comparison of `r` with the
+projective x-coordinate that saves the inversion modulo the prime. The things listed for ECDH apply as well (a squaring that
+uses the symmetry of a product, a reduction written for the shape of each prime, and on x86-64 a backend for BMI2 and ADX),
+and so would a shorter chain of multiplications for the inverses modulo the order and the prime, which are the number to
+the power of a fixed exponent now.
 
 No x86 figures are given yet, for the same reason as the others: nothing here can time real x86 hardware, and Rosetta 2
 translates the instructions, so its timings say nothing about an x86 CPU. The manual `Benchmarks` workflow

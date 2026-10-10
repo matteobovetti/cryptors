@@ -16,33 +16,33 @@ use core::hint::black_box;
 
 /// All ones if `bit` is 1 and all zeros if it is 0. `bit` must be 0 or 1.
 #[inline(always)]
-pub(super) const fn mask(bit: u64) -> u64 {
+pub(crate) const fn mask(bit: u64) -> u64 {
     debug_assert!(bit <= 1);
     black_box(0u64.wrapping_sub(bit))
 }
 
 /// 1 if `x` is zero and 0 otherwise.
 #[inline(always)]
-pub(super) const fn is_zero(x: u64) -> u64 {
+pub(crate) const fn is_zero(x: u64) -> u64 {
     // The top bit of `x | -x` is set exactly when `x` is not zero.
     ((x | x.wrapping_neg()) >> 63) ^ 1
 }
 
 /// 1 if `a == b` and 0 otherwise.
 #[inline(always)]
-pub(super) const fn eq(a: u64, b: u64) -> u64 {
+pub(crate) const fn eq(a: u64, b: u64) -> u64 {
     is_zero(a ^ b)
 }
 
 /// `a` if `mask` is all ones, `b` if it is all zeros.
 #[inline(always)]
-pub(super) const fn select(mask: u64, a: u64, b: u64) -> u64 {
+pub(crate) const fn select(mask: u64, a: u64, b: u64) -> u64 {
     b ^ (mask & (a ^ b))
 }
 
 /// Whether the byte strings are equal, in a time that depends only on their
 /// length. Strings of different lengths are never equal.
-pub(super) fn bytes_eq(a: &[u8], b: &[u8]) -> bool {
+pub(crate) fn bytes_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
@@ -54,7 +54,7 @@ pub(super) fn bytes_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 /// Whether `bytes` is all zeros, in a time that depends only on the length.
-pub(super) fn bytes_are_zero(bytes: &[u8]) -> bool {
+pub(crate) fn bytes_are_zero(bytes: &[u8]) -> bool {
     let mut acc = 0u8;
     for byte in bytes {
         acc |= byte;
@@ -64,7 +64,7 @@ pub(super) fn bytes_are_zero(bytes: &[u8]) -> bool {
 
 /// Whether the big-endian integer `a` is less than `b`, in a time that depends
 /// only on the length. The two must have the same length.
-pub(super) fn bytes_lt(a: &[u8], b: &[u8]) -> bool {
+pub(crate) fn bytes_lt(a: &[u8], b: &[u8]) -> bool {
     assert_eq!(a.len(), b.len());
     // The borrow out of `a - b`, taken from the least significant byte up: it
     // is 1 exactly when `a < b`.
