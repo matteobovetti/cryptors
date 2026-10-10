@@ -88,35 +88,43 @@
 //!   break HMAC, which does not need collision resistance, but neither should
 //!   be chosen for a new design.
 //!
-//! An `Hkdf` holds the PRK as a key of HMAC, which is overwritten with zeros
-//! when it is dropped, and its `Debug` output does not show it. That is best
-//! effort: the hash functions' working values on the stack are not
+//! An `Hkdf` holds the PRK as a key of HMAC: the hash's states after the two
+//! padded keys, which are worth as much as the PRK. They are overwritten with
+//! zeros when it is dropped, and its `Debug` output does not show them. That
+//! is best effort: the hash functions' working values on the stack are not
 //! overwritten, nor are the digests they return (`T(i)` among them, which
 //! generic code over `Digest` can read but not overwrite), nor the copy that
-//! moving an `Hkdf` can leave behind where it was. The output is written to the
-//! caller's buffer, and wiping that is the caller's job.
+//! moving an `Hkdf` can leave behind where it was. The output is written to
+//! the caller's buffer, and wiping that is the caller's job.
 //!
 //! # Implementation
 //!
 //! HKDF has no backend of its own. It is a handful of HMAC calls, the work is
 //! in the hash, and the hash picks its backend at run time as it always does
-//! (FEAT_SHA256 for SHA-256 on an Apple M1, say). An `Hkdf` keeps HMAC keyed
-//! with the PRK, so the key is prepared once, hashed first if it is longer than
-//! a block and then padded, and reused for every block of every Expand. Each
-//! block is written straight into the caller's buffer, and the next block reads
-//! the previous one back from there, so Expand allocates nothing per block and
+//! (FEAT_SHA256 for SHA-256 on an Apple M1, say). An `Hkdf` is an
+//! [`Hmac`](crate::hmac::Hmac) keyed with the PRK, and that is all it holds.
+//! Each block is written straight into the caller's buffer, and the next block
+//! reads the previous one back from there, so Expand allocates nothing and
 //! keeps no copy of the output.
 //!
-//! The HMAC is, for now, a private one in `src/hkdf/hmac.rs`, which stands in
-//! for the crate's own HMAC module until it lands. `Digest` hashes a whole
-//! message in one call, so this HMAC hashes the padded key again for every
-//! message, twice: four calls of the compression function per block of output,
-//! where an HMAC that keeps the state of the hash after the padded key needs
-//! two.
+//! `Hmac` hashes its two padded keys once, when it is keyed, and keeps the
+//! state of the hash after each, so a block of output costs what the
+//! definition needs and no more: the inner hash of `T(i - 1) | info | i`, fed
+//! in its three parts from where they are, from one state, and the outer hash
+//! of that digest from the other. That is two calls of the compression
+//! function per block as long as those three parts fit in a block of the hash
+//! with its padding (an `info` of up to 22 bytes for SHA-256, 46 for SHA-512),
+//! and one more for each further block a longer `info` takes. Extract keys an
+//! `Hmac` with the salt for a single tag, with the one-call
+//! [`hmac::hmac`](crate::hmac::hmac), which uses the salt's states up rather
+//! than copying them, and then keys the one that Expand uses with the PRK:
+//! with a 32-byte IKM, [`Hkdf::derive`] makes six calls of the compression
+//! function before the first block of output. Nothing allocates, as the
+//! states are part of the `Hmac`.
 //!
-//! The module is safe Rust. The one `unsafe` it relies on is the volatile write
-//! that wipes a key when it is dropped, which the compiler would otherwise
-//! delete as a store nobody reads.
+//! The module is safe Rust. The `unsafe` it relies on is in the wiping of
+//! HMAC's states when they are dropped: volatile writes, which the compiler
+//! would otherwise delete as stores nobody reads.
 //!
 //! ## Trust
 //!
@@ -181,7 +189,6 @@
 //! # Ok::<(), Error>(())
 //! ```
 
-mod hmac;
 mod kdf;
 
 pub use kdf::{Error, Hkdf};

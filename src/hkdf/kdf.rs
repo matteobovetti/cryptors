@@ -1,15 +1,18 @@
 use core::fmt;
 
-use super::hmac::Keyed;
 use crate::Digest;
+use crate::hmac::{Hmac, hmac};
 
 /// Expand numbers its blocks with a one-byte counter (RFC 5869 section 2.3),
 /// so there are at most this many of them.
 const MAX_BLOCKS: usize = 255;
 
 /// HKDF-Extract (RFC 5869 section 2.2): the PRK `HMAC(salt, ikm)`.
+///
+/// The salt keys HMAC for this one tag, so the one-call form is used: it uses
+/// the salt's two hash states up instead of copying them for a tag.
 fn extract_prk<D: Digest>(salt: &[u8], ikm: &[u8]) -> D::Output {
-    Keyed::<D>::new(salt).mac_parts(&[ikm])
+    hmac::<D>(salt, ikm)
 }
 
 /// HKDF (RFC 5869) over the hash `D`: a pseudorandom key (PRK), ready to be
@@ -44,8 +47,9 @@ fn extract_prk<D: Digest>(salt: &[u8], ikm: &[u8]) -> D::Output {
 /// # Ok::<(), cryptors::hkdf::Error>(())
 /// ```
 pub struct Hkdf<D: Digest> {
-    /// HMAC under the PRK: every block of output is one HMAC with this key.
-    prk: Keyed<D>,
+    /// HMAC keyed with the PRK, which holds the hash's states after the two
+    /// padded keys: every block of output is one tag from those states.
+    prk: Hmac<D>,
 }
 
 impl<D: Digest> Hkdf<D> {
@@ -61,7 +65,7 @@ impl<D: Digest> Hkdf<D> {
     /// empty one is the same key to HMAC, which pads its key with zeros.
     pub fn extract(salt: &[u8], ikm: &[u8]) -> Self {
         Self {
-            prk: Keyed::new(extract_prk::<D>(salt, ikm).as_ref()),
+            prk: Hmac::new(extract_prk::<D>(salt, ikm).as_ref()),
         }
     }
 
@@ -94,7 +98,7 @@ impl<D: Digest> Hkdf<D> {
             return Err(Error::InvalidPrkLength);
         }
         Ok(Self {
-            prk: Keyed::new(prk),
+            prk: Hmac::new(prk),
         })
     }
 
@@ -117,9 +121,11 @@ impl<D: Digest> Hkdf<D> {
             return Err(Error::InvalidLength);
         }
 
-        // T(i) = HMAC(PRK, T(i - 1) | info | i), with T(0) empty. Each block
-        // goes straight into `okm`, and the next one reads it back from there,
-        // so there is no copy of it to wipe. The last block may be cut short.
+        // T(i) = HMAC(PRK, T(i - 1) | info | i), with T(0) empty. The three
+        // parts go into the hash one after the other, with nothing put
+        // together first. Each block goes straight into `okm`, and the next
+        // one reads it back from there, so there is no copy of it to wipe. The
+        // last block may be cut short.
         let mut previous: &[u8] = &[];
         for (block, counter) in okm.chunks_mut(D::OUTPUT_LEN).zip(1..=u8::MAX) {
             let t = self.prk.mac_parts(&[previous, info, &[counter]]);
@@ -584,8 +590,7 @@ mod tests {
 
     /// Checks two blocks of HKDF from a 1000-byte IKM (`counting(1000)`, which
     /// wraps) with a 1000-byte info of `0xf0`, and A.1's salt: every message
-    /// HMAC hashes is then longer than any block, and longer than the HMAC
-    /// puts together on the stack.
+    /// HMAC hashes is then several blocks long.
     fn check_long_inputs<D: Digest>(name: &str, expected: &str) {
         let mut okm = vec![0; 2 * D::OUTPUT_LEN];
         Hkdf::<D>::derive(&counting(13), &counting(1000), &[0xf0; 1000], &mut okm).unwrap();
@@ -637,6 +642,39 @@ mod tests {
         check_lengths_of_inputs::<Sha512>("SHA-512");
         check_lengths_of_inputs::<Sha512_224>("SHA-512/224");
         check_lengths_of_inputs::<Sha512_256>("SHA-512/256");
+    }
+
+    /// Dropping an `Hkdf` must leave no PRK behind.
+    ///
+    /// An `Hkdf` is its `Hmac` and nothing else, and an `Hmac` is two hash
+    /// states, each a chaining value, a block of bytes and two counters,
+    /// 64 + 144 + 8 + 8 bytes all aligned to 8, so there is no padding: every
+    /// byte of an `Hkdf` belongs to a field, and is wiped when the states are.
+    #[test]
+    fn dropping_wipes_the_prk() {
+        use crate::incremental::MAX_BLOCK_LEN;
+        use core::mem::{MaybeUninit, size_of};
+
+        assert_eq!(size_of::<Hkdf<Sha256>>(), size_of::<Hmac<Sha256>>());
+        assert_eq!(size_of::<Hkdf<Sha256>>(), 2 * (64 + MAX_BLOCK_LEN + 8 + 8));
+
+        let mut slot = MaybeUninit::new(Hkdf::<Sha256>::extract(b"salt", b"secret"));
+        // One raw pointer does the dropping and the reading, so that the drop
+        // does not invalidate the pointer the reads go through.
+        let hkdf = slot.as_mut_ptr();
+        let bytes = hkdf.cast::<u8>();
+        let read = || -> Vec<u8> {
+            (0..size_of::<Hkdf<Sha256>>())
+                // SAFETY: the slot is alive and every byte of it was written,
+                // first by `extract` and then, if the drop works, by the wipe.
+                .map(|i| unsafe { bytes.add(i).read() })
+                .collect()
+        };
+        assert!(read().iter().any(|&b| b != 0), "no PRK to wipe");
+
+        // SAFETY: the slot holds an initialised `Hkdf`, dropped only here.
+        unsafe { hkdf.drop_in_place() };
+        assert!(read().iter().all(|&b| b == 0), "the PRK survives the drop");
     }
 
     /// The Debug output must not show the PRK.
