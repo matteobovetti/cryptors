@@ -1170,8 +1170,9 @@ skips Extract for a secret that is a uniformly random key already, such as an ea
 | SHA-512/224 | `Sha512_224` | 28 bytes | 128 bytes | 7140 bytes |
 | SHA-512/256 | `Sha512_256` | 32 bytes | 128 bytes | 8160 bytes |
 
-SHA-3 is not on `Digest` yet (see [Example](#example)), so there is no HKDF-SHA3. HMAC is on the list above as a module of
-its own, and until it lands, `src/hkdf/hmac.rs` holds a private stand-in with the two functions HKDF needs from it.
+SHA-3 is not on `Digest` yet (see [Example](#example)), so there is no HKDF-SHA3. The HMAC is the crate's own
+([HMAC](#hmac)): an `Hkdf` is an `Hmac<D>` keyed with the PRK, which hashes its padded keys once and starts every block of
+output from the states that leaves.
 
 ### Usage
 
@@ -1268,11 +1269,11 @@ eight:
   longer than any block.
 
 The tests also cover the rest of the API: an empty salt gives the PRK of HashLen zeros, `from_prk` refuses a key one byte
-short and takes one of HashLen, and `Debug` shows no secret. That dropping an `Hkdf` wipes its key is not tested: the key
-is on the heap, in the stand-in HMAC, and cannot be read once it is freed. A scratch copy of the code with each of 15
-deliberate breaks (a pad byte changed, a counter starting at 0 or stopping at 254, a length check off by one, keys of
-exactly one block hashed, the stack buffer overrun, ...) fails at least one test for every break but one, which put every
-message on the heap and is not a bug.
+short and takes one of HashLen, dropping an `Hkdf` leaves every byte of it zero (it is nothing but its `Hmac`, two hash
+states with no padding between their fields), and `Debug` shows no secret. A scratch copy of `src/hkdf/kdf.rs` with each
+of 11 deliberate breaks (the salt and the IKM swapped, a PRK cut to HashLen, a counter starting at 0 or stopping at 254, a
+length check off by one, the `Hmac` never dropped, ...) fails at least one test for every one of them. HMAC itself is
+tested in its own module; see [HMAC](#hmac).
 
 ### Benchmarking
 
@@ -1290,36 +1291,43 @@ first 8 of the last key of the chain, and the two sides print the same. HKDF has
 backend its hash picks, FEAT_SHA256 and FEAT_SHA512 here, on both sides. `-tags purego` is not run, as there is no
 HKDF code to swap; the hashes have runs of their own, under [SHA-256](#sha-256) and [SHA-512](#sha-512).
 
-On an Apple M1 Pro, against Go 1.27.1's `crypto/hkdf` on the same machine (medians of three interleaved runs, higher is
+On an Apple M1 Pro, against Go 1.27.1's `crypto/hkdf` on the same machine (medians of five interleaved runs, higher is
 better):
-
-<!-- provisional: re-measure in phase 2 -->
 
 | Workload | cryptors | Go stdlib |
 |----------|----------|-----------|
-| HKDF-SHA256, Expand to 8160 bytes | 135 MiB/s | **240 MiB/s** |
-| HKDF-SHA256, Extract and Expand to a 32-byte key | **2.35 M/s** | 1.44 M/s |
-| HKDF-SHA512, Expand to 16320 bytes | 99 MiB/s | **214 MiB/s** |
-| HKDF-SHA512, Extract and Expand to a 32-byte key | **828 k/s** | 641 k/s |
+| HKDF-SHA256, Expand to 8160 bytes | **356 MiB/s** | 247 MiB/s |
+| HKDF-SHA256, Extract and Expand to a 32-byte key | **3.10 M/s** | 1.45 M/s |
+| HKDF-SHA512, Expand to 16320 bytes | **274 MiB/s** | 221 MiB/s |
+| HKDF-SHA512, Extract and Expand to a 32-byte key | **1.28 M/s** | 660 k/s |
+
+Run-to-run spread was within 2% in every cell, but the machine was not idle (a desktop, load average 3 to 5, with other
+work running in other workspaces), so the last digit means little. cryptors is ahead on all four rows.
 
 Per workload:
 
-- **Short keys: cryptors is 1.64x (SHA-256) and 1.29x (SHA-512) faster.** No HMAC key is used for more than one block
-  here, so both sides hash the same blocks, and the difference is in the work around the hash. Go's `hkdf.Key`, for one,
-  allocates two HMAC objects and their four hash states on every call.
-- **Long outputs: Go is 1.78x (SHA-256) and 2.17x (SHA-512) faster.** Go's HMAC hashes the padded key once, saves the
-  hash states after it, and restores them for every later block. The stand-in HMAC here cannot, because `Digest` hashes a
-  whole message in one call, so it hashes the padded key again for each of the 255 blocks: four calls of the compression
-  function per block of output, where Go needs two. The rest is the wiping of HMAC's buffers, one volatile byte store at
-  a time; in one run with it removed, Expand was 1.41x (SHA-256) and 1.30x (SHA-512) faster.
+- **Long outputs: cryptors is 1.44x (SHA-256) and 1.24x (SHA-512) faster.** Both sides hash the padded keys once, keep
+  the hash states after them, and start every block from those: two calls of the compression function per block of
+  output. The difference is in the work around them. From the second block on, Go restores its two states from their
+  marshaled bytes for every block, behind the `hash.Hash` interface, and it allocates each output; cryptors copies the
+  states and writes into the caller's buffer. Before the crate had an HMAC, HKDF ran on a stand-in that hashed the padded keys again for every block, four
+  calls instead of two, and Expand measured 135 and 99 MiB/s in three runs: 1.78x and 2.17x behind Go, where it is now
+  ahead.
+- **Short keys: cryptors is 2.15x (SHA-256) and 1.94x (SHA-512) faster.** For a 32-byte key both sides make the same
+  eight calls of the compression function: two to key HMAC with the salt, two for the PRK, two to key HMAC with the PRK,
+  and two for the one block of output. Go's `hkdf.Key` also allocates two HMAC objects with their four hash states, and
+  the output, on every call; cryptors allocates nothing.
 
-These figures are for the stand-in HMAC in `src/hkdf/hmac.rs`, and will move when HKDF switches to the crate's own.
+Measured against the bare hashes in their own sections (2365 MiB/s for SHA-256, 1386 for SHA-512), two calls of the
+compression function per block would allow about 590 MiB/s of SHA-256 output and about 345 of SHA-512. The figures
+above are 60% and 79% of that. The rest goes outside the compression function: copying the two states that each block
+starts from, wiping the copies afterwards, and the padding. How it splits between those was not measured.
 
-What would make it faster, none of it done: an HMAC that keeps the state of the hash after the padded key, which needs
-`Digest` to hash a message in pieces, and would halve the work of a long Expand; wiping with wider stores than one byte;
-and, for many derivations at once, hashing their blocks side by side as MD5 and SHA-3 do with their `_many` functions,
-which SHA-2 does not have. Within one Expand there is nothing to run side by side, since each block needs the one
-before it.
+What would make it faster, none of it done: an Expand that started every block from one pair of scratch states, copied
+into from the saved ones and wiped once at the end rather than after every block, which needs a way into HMAC that the
+crate does not have; and, for many derivations at once, hashing their blocks side by side as MD5 and SHA-3 do with their
+`_many` functions, which SHA-2 does not have. Within one Expand there is nothing to run side by side, since each block
+needs the one before it.
 
 No x86 figures are given yet, for the same reason as the others: nothing here can time real x86 hardware, and Rosetta 2
 translates the instructions, so its timings say nothing about an x86 CPU. The manual `Benchmarks` workflow
