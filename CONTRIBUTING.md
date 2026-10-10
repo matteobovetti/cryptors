@@ -46,9 +46,12 @@ src/
   block_cipher.rs the `BlockCipher` trait shared by every block cipher
   aes/            one directory per algorithm
   des/            DES and Triple DES: a block cipher with one implementation, `scalar`
-  ec/             the arithmetic of the NIST curves that ECDH and ECDSA share (private; they re-export its curve types)
+  ec/             the curve arithmetic that more than one algorithm shares: the NIST curves (ECDH, ECDSA) and the
+                  field of Curve25519 (X25519, Ed25519); private, but ECDH and ECDSA re-export its curve types
   ecdh/           key agreement over P-256, P-384, P-521 and X25519: keys generic over the curve
   ecdsa/          signatures over P-224, P-256, P-384 and P-521: keys and signatures generic over the curve
+  ed25519/        signatures over edwards25519 (Ed25519, Ed25519ctx, Ed25519ph): one curve, so nothing generic
+    testdata/       Go's `sign.input` vectors, decompressed but otherwise as Go ships them
   md5/
   sha1/
   sha2/           a family of functions: one directory per word size
@@ -91,6 +94,7 @@ re-exported by the two modules that use them. The files of `src/ec/`, which is n
 | `weierstrass.rs` | The group law of the curves (complete formulas, a four-bit window), and the order of a curve as a modulus, which is the field of the scalars of ECDSA. |
 | `field.rs` | The arithmetic modulo a prime that the two use (Montgomery form, any number of limbs). |
 | `ct.rs` | The comparisons and selections that do not branch. Anything that depends on a secret goes through these. |
+| `fe25519.rs` | The integers modulo `2^255 - 19` in five limbs of 51 bits, the field of X25519 and of Ed25519, with its tests against `field.rs`. |
 
 The files of `src/ecdh/`, from the API down:
 
@@ -100,7 +104,6 @@ The files of `src/ecdh/`, from the API down:
 | `curve.rs` | `Curve`, the public half of the trait (the names and sizes), the private half it requires, which does the work on byte strings, and `Error`. |
 | `keypair.rs` | `PrivateKey`, `PublicKey`, `SharedSecret`, and the tests of the API: known answers, Wycheproof, invalid keys, `generate`, the chained exchanges, wiping, `Debug` and the `#[ignore]`d `throughput`. |
 | `nist.rs`, `x25519.rs` | One curve family each: its implementation of the private half of `Curve` (and, for X25519, the types and constants). |
-| `fe25519.rs` | The field of X25519, in five limbs of 51 bits. |
 | `vectors.rs` | Test data only (`#[cfg(test)]`): known answers, the Wycheproof selection and the chained exchanges' results. |
 
 And those of `src/ecdsa/`:
@@ -116,6 +119,18 @@ And those of `src/ecdsa/`:
 | `nist.rs` | The implementation of the private half of `Curve` for the four curves. |
 | `vectors.rs` | Test data only: RFC 6979, c2sp's key generation vectors, a selection of CAVP and of Wycheproof, the signatures of another implementation, and the chains. |
 
+Ed25519, `src/ed25519/`, is a signature scheme with neither shape either, and with no trait at all: it has one
+curve, and its hash is part of the algorithm, so its keys are plain types. Of `src/ec/` it uses the field it shares
+with X25519, `fe25519.rs`, and `ct.rs`; the rest is for curves in Weierstrass form. Its files, from the API down:
+
+| File | Holds |
+|------|-------|
+| `mod.rs` | The documentation, the `mod` declarations and the `pub use` of the keys, the signature, the error and `MAX_CONTEXT_LEN`. |
+| `signature.rs` | `SigningKey`, `VerifyingKey`, `Signature` and `Error`, the three schemes and the hash input that tells them apart, and the tests of the API: RFC 8032, Go's vectors, the 768 signatures, every rule of verification, wiping, `Debug` and the `#[ignore]`d `throughput`. |
+| `edwards.rs` | The points of the curve and its constants: their encoding, the group law, the constant-time multiplication of the base point and the variable-time double multiplication of verification, with the two tables of multiples of the base point that every key shares. |
+| `scalar.rs` | The arithmetic modulo the order of the group, in four 64-bit words with Barrett reduction, and the two recodings of a scalar into digits. |
+| `testdata/sign.input` | Test data only: Go's 128 vectors, read with `include_str!`. |
+
 The backend modules are private: users see `cryptors::sha2::Sha256`, never the
 path through `sha256`. When several functions share one algorithm, as the six
 SHA-2 functions share two, they share a directory. Each word size then has the
@@ -129,19 +144,22 @@ extendable-output functions do not fit the trait. The block ciphers (AES, DES) i
 `BlockCipher` instead, and are not unit types: a cipher holds the key schedule it
 was built with. ECDH and ECDSA implement neither: their curves are unit types, but they only
 name the curve that a `PrivateKey<C>`, a `PublicKey<C>` or a `Signature<C>` belongs to. ECDSA takes the hash as
-a type parameter, `D: Digest`, of the functions that sign and verify a message.
+a type parameter, `D: Digest`, of the functions that sign and verify a message. Ed25519 implements neither trait
+and has no type parameter: a `SigningKey`, a `VerifyingKey` and a `Signature`, with a method for each of its three
+schemes.
 
 Each algorithm in `bench/` is its own Go module with a throughput test that
-mirrors the Rust one (same buffer, warm-up and best-of-5 method). The AES, ECDH, ECDSA, SHA-2
+mirrors the Rust one (same buffer, warm-up and best-of-5 method). The AES, ECDH, ECDSA, Ed25519, SHA-2
 and SHA-3 ones also split into `impl_asm_test.go` and `impl_purego_test.go`, so that
 `-tags purego` selects Go's portable code, the counterpart of our `scalar`
-backend (of our one implementation, for ECDH and ECDSA). (`descmp` does not split: Go's
+backend (of our one implementation, for ECDH, ECDSA and Ed25519). (`descmp` does not split: Go's
 `crypto/des` is portable code on every platform, so it has one run.) The ECDH
 one also checks its inputs, with the NIST and RFC 7748 vectors and with the
 chained exchanges of `src/ecdh/keypair.rs`, so a broken build fails instead of
 passing as a figure, and the ECDSA one does the same with the signatures of
 RFC 6979, the chained signatures of `src/ecdsa/keypair.rs` and the randomized
-signatures of `src/ecdsa/vectors.rs`, which Go made. `make bench-go` runs them all, and so does the manual `Benchmarks`
+signatures of `src/ecdsa/vectors.rs`, which Go made, and the Ed25519 one with RFC 8032's first example and the 768
+signatures of `src/ed25519/signature.rs`. `make bench-go` runs them all, and so does the manual `Benchmarks`
 workflow (`.github/workflows/bench.yml`) on GitHub's x86-64 and Arm runners.
 
 ## Adding or implementing an algorithm
@@ -234,6 +252,19 @@ scripted reader, `encoding_lengths` and `der_sizes_are_the_documented_ones`, `eq
 reaches, and the panic for a generator that never gives a number), `hmac_drbg::tests::*` (the layout of the seed), `der::tests::*`
 (every way to write a signature that is not the one DER prescribes, and the length at which the long form starts),
 `curve::tests::errors_say_what_went_wrong` and `throughput`.
+
+Ed25519's tests are `known_answers` (every example of RFC 8032 for the three schemes), `go_sign_input` (Go's vectors,
+from `testdata/`), `many_keys` (768 signatures under 256 keys, with values from Go that OpenSSL agrees with and that
+`bench/ed25519cmp` recomputes), one test for each rule of verification (`rejects_tampering`,
+`rejects_s_not_below_order`, `rejects_non_canonical_r`, `rejects_non_canonical_public_keys`,
+`rejects_small_order_public_keys` and `cofactorless_equation`), `context_lengths`, `wrong_lengths`,
+`generate_reads_a_seed`, `dropping_wipes_the_secret_key`, `debug_hides_the_key` and `throughput`, which reports the
+time of an operation rather than MiB/s. Under them, each layer checks itself against something that does not share its
+code: the shared field, `src/ec/fe25519.rs`, against the generic field of `src/ec/field.rs`, at the largest limbs its
+bounds allow (ECDH's tests, and `negation_and_pow_p58_match_the_generic_field`,
+`sqrt_ratio_finds_the_roots_there_are` and `sign_and_zero_follow_the_canonical_value` for what only Ed25519 uses);
+`scalar.rs` against a reduction one bit at a time; and the double multiplication of `edwards.rs` against plain
+double-and-add. `cargo test -- ed25519 ec::fe25519` runs all of them.
 
 A cipher with a single implementation has no backend to compare, so `src/des/` swaps
 `scalar_known_answers`, `matches_scalar_backend` and `unaligned_input` for

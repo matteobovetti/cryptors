@@ -33,6 +33,9 @@ jobs:
         # there; the other curves are portable code in Go too. On x86-64 our
         # field arithmetic compiles to `mulq` and does not use BMI2 or ADX even
         # where the runner has them (`lscpu` says).
+        # Ed25519 has no hardware path on either; on x86-64 Go's field
+        # multiplication is assembly and ours is not, so its `purego` run is
+        # the like-for-like one there.
         runner: [ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
     steps:
