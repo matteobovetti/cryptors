@@ -25,8 +25,8 @@ This library supports the following algorithms and packages:
 | DES | [FIPS 46-3](https://csrc.nist.gov/pubs/fips/46-3/final): Data Encryption Standard and Triple DES (TDEA), withdrawn in 2005 and kept for legacy data | Implemented |
 | ECDH | [NIST SP 800-56A Rev. 3](https://csrc.nist.gov/pubs/sp/800/56/a/r3/final) and [RFC 7748](https://www.rfc-editor.org/info/rfc7748): Elliptic Curve Diffie-Hellman over P-256, P-384, P-521 and Curve25519 (X25519) | Implemented |
 | ECDSA | [FIPS 186-5](https://csrc.nist.gov/pubs/fips/186-5/final) and [RFC 6979](https://www.rfc-editor.org/info/rfc6979): Elliptic Curve Digital Signature Algorithm over P-224, P-256, P-384 and P-521, randomized and deterministic | Implemented |
-| Ed25519 | [RFC 8032](https://www.rfc-editor.org/info/rfc8032): Edwards-curve Digital Signature Algorithm over edwards25519 (Ed25519, Ed25519ctx and Ed25519ph) | Implemented |
-| HKDF | RFC 5869: HMAC-based Extract-and-Expand Key Derivation Function | Planned |
+| Ed25519 | Ed25519 signature algorithm | Planned |
+| HKDF | [RFC 5869](https://www.rfc-editor.org/info/rfc5869): HMAC-based Extract-and-Expand Key Derivation Function, over any hash of the crate that implements `Digest` | Implemented |
 | HMAC | [FIPS 198-1](https://csrc.nist.gov/pubs/fips/198-1/final) and [RFC 2104](https://www.rfc-editor.org/info/rfc2104): Keyed-Hash Message Authentication Code, over MD5, SHA-1 and the six SHA-2 functions | Implemented |
 | HPKE | RFC 9180: Hybrid Public Key Encryption | Planned |
 | MD5 | [RFC 1321](https://www.rfc-editor.org/info/rfc1321): The MD5 Message-Digest Algorithm | Implemented |
@@ -236,11 +236,17 @@ cryptors
 │   ├── P224, P256, P384, P521       the curves, which implement the sealed trait `Curve` (ecdh has three of these types)
 │   └── Error
 <<<<<<< HEAD
+<<<<<<< HEAD
 ├── ed25519                          signatures on one curve with its hash built in, so nothing is generic
 │   ├── SigningKey, VerifyingKey,    a method for each of the three schemes: Ed25519, Ed25519ctx, Ed25519ph
 │   │   Signature
 │   └── Error, MAX_CONTEXT_LEN
 =======
+=======
+├── hkdf                             key derivation: generic over the hash, as in Hkdf<Sha256>
+│   ├── Hkdf                         a pseudorandom key, extracted or given, ready to expand into keys
+│   └── Error
+>>>>>>> f72b130 (HKDF documentation)
 ├── hmac                             message authentication: built on a hash, so generic over any `Digest`
 │   ├── Hmac<D>                      keyed once, with the hash's states after the padded key
 │   ├── hmac                         the one-call form
@@ -269,7 +275,7 @@ The SHA-2 functions are all imported from `sha2`, as in `cryptors::sha2::Sha256`
 
 MD5, SHA-1 and the six SHA-2 functions (SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224 and SHA-512/256) are
 zero-sized types that implement one trait, `cryptors::Digest`. Bring it into scope to call them, or take
-`D: Digest` to be generic over the hash (HMAC does exactly that, and HKDF and PBKDF2 will):
+`D: Digest` to be generic over the hash ([ECDSA](#ecdsa), [HKDF](#hkdf) and [HMAC](#hmac) do exactly that, and PBKDF2 will):
 
 ```rust
 use cryptors::{Digest, md5::Md5, sha1::Sha1, sha2::{Sha256, Sha512}, sha3};
@@ -318,6 +324,10 @@ built from a key with `new`, which hashes the padded key once; `mac` then gives 
 checks one without stopping at the first wrong byte. Inside the crate, the hashes can also take a message in pieces,
 which is what lets HMAC start every tag from the state it computed from the key, and hash a message from the caller's
 memory without copying it. See [HMAC](#hmac).
+
+Key derivation takes the hash as a type parameter of the type itself. HKDF is HMAC with a hash, and the hash is the one
+choice there is to make, so an `Hkdf<D>` is generic over any `D: Digest`: `Hkdf::<Sha256>::extract(salt, secret)` holds
+the pseudorandom key, and `expand(info, &mut key)` fills a buffer with a key for one purpose. See [HKDF](#hkdf).
 
 ## AES
 
@@ -1122,6 +1132,194 @@ projective x-coordinate that saves the inversion modulo the prime. The things li
 uses the symmetry of a product, a reduction written for the shape of each prime, and on x86-64 a backend for BMI2 and ADX),
 and so would a shorter chain of multiplications for the inverses modulo the order and the prime, which are the number to
 the power of a fixed exponent now.
+
+No x86 figures are given yet, for the same reason as the others: nothing here can time real x86 hardware, and Rosetta 2
+translates the instructions, so its timings say nothing about an x86 CPU. The manual `Benchmarks` workflow
+(`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
+
+## HKDF
+
+HKDF, the HMAC-based Extract-and-Expand Key Derivation Function of [RFC 5869](https://www.rfc-editor.org/info/rfc5869),
+takes a secret that is not fit to be a key yet and turns it into as many keys as a protocol needs, each bound to what it
+is for. The secret is typically the result of a key exchange, such as [ECDH](#ecdh)'s, which has structure (it is the
+coordinate of a point) and is the same bytes on both sides. HKDF is how TLS 1.3, QUIC, HPKE and the Signal protocol turn
+their shared secrets into keys. It is neither a hash nor a cipher, so it implements neither `Digest` nor `BlockCipher`:
+it is built on HMAC, and so on a hash, and `Hkdf<D>` is generic over any `D: Digest`.
+
+It runs in two steps, where HashLen is the length of one output of the hash:
+
+- **Extract** concentrates the input keying material (IKM), whose entropy may be spread unevenly over its bytes, into a
+  pseudorandom key: `PRK = HMAC(salt, IKM)`, of HashLen bytes. The salt is optional and not secret; without one it is
+  HashLen zero bytes, which to HMAC is the same key as an empty salt.
+- **Expand** stretches the PRK into output keying material (OKM), one hash output at a time:
+  `T(i) = HMAC(PRK, T(i - 1) | info | i)`, from an empty `T(0)`, cut to the length asked for. `info` names what the
+  output is for. The counter `i` is one byte, so the output is at most 255 blocks long.
+
+The two are separate because their jobs are: Extract needs a salt and makes one key, Expand needs that key and makes
+many, each named by its `info`. A protocol extracts once for each new secret and expands once for each key it needs, and
+skips Extract for a secret that is a uniformly random key already, such as an earlier output (RFC 5869, section 3.3).
+
+| Hash | `D` | HashLen | Block | Longest output (255 × HashLen) |
+|------|-----|---------|-------|--------------------------------|
+| MD5 | `Md5` | 16 bytes | 64 bytes | 4080 bytes |
+| SHA-1 | `Sha1` | 20 bytes | 64 bytes | 5100 bytes |
+| SHA-224 | `Sha224` | 28 bytes | 64 bytes | 7140 bytes |
+| SHA-256 | `Sha256` | 32 bytes | 64 bytes | 8160 bytes |
+| SHA-384 | `Sha384` | 48 bytes | 128 bytes | 12240 bytes |
+| SHA-512 | `Sha512` | 64 bytes | 128 bytes | 16320 bytes |
+| SHA-512/224 | `Sha512_224` | 28 bytes | 128 bytes | 7140 bytes |
+| SHA-512/256 | `Sha512_256` | 32 bytes | 128 bytes | 8160 bytes |
+
+SHA-3 is not on `Digest` yet (see [Example](#example)), so there is no HKDF-SHA3. HMAC is on the list above as a module of
+its own, and until it lands, `src/hkdf/hmac.rs` holds a private stand-in with the two functions HKDF needs from it.
+
+### Usage
+
+```rust
+use cryptors::hkdf::{Error, Hkdf};
+use cryptors::sha2::Sha256;
+
+// RFC 5869, Appendix A.1.
+let ikm = [0x0b; 22];
+let salt = [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c];
+let info = [0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9];
+
+// In one call: Extract, then Expand into the buffer.
+let mut okm = [0; 42];
+Hkdf::<Sha256>::derive(&salt, &ikm, &info, &mut okm).unwrap();
+assert_eq!(okm[..8], [0x3c, 0xb2, 0x5f, 0x25, 0xfa, 0xac, 0xd5, 0x7a]);
+
+// Or extract once, then expand one key per purpose, each with its own `info`.
+let hkdf = Hkdf::<Sha256>::extract(&salt, &ikm);
+let mut client = [0; 16];
+let mut server = [0; 16];
+hkdf.expand(b"client write key", &mut client).unwrap();
+hkdf.expand(b"server write key", &mut server).unwrap();
+assert_ne!(client, server);
+
+// A key that is uniformly random already (an earlier output, say) can skip Extract,
+// if it is at least HashLen bytes long.
+let next = Hkdf::<Sha256>::from_prk(&okm[..32]).unwrap();
+assert!(matches!(Hkdf::<Sha256>::from_prk(&okm[..31]), Err(Error::InvalidPrkLength)));
+
+// Asking for more than 255 blocks is an error, not a panic, and the buffer is left as it was.
+let mut too_long = vec![0; Hkdf::<Sha256>::MAX_OUTPUT_LEN + 1];
+assert_eq!(next.expand(b"", &mut too_long), Err(Error::InvalidLength));
+```
+
+`examples/hkdf.rs` checks the vector above, then runs an X25519 exchange between a client and a server and derives a
+key for each direction from the shared secret, with both public keys in the `info`: `cargo run --release --example hkdf`.
+
+### Security
+
+HKDF is not broken. Its security rests on HMAC being a pseudorandom function, which with SHA-256 or SHA-512 nothing known
+contradicts, and the construction comes with an analysis of its own (Krawczyk, CRYPTO 2010, the paper behind the RFC).
+With MD5 or SHA-1 it is there for older protocols: their collisions do not break HMAC, which does not need collision
+resistance, but neither should be chosen for a new design. A quantum computer does not break HKDF the way it would break
+ECDH; Grover's algorithm at most halves the bits of security of a key, which leaves 128 of the 256 of a SHA-256 output.
+
+Six things to know when using it:
+
+- **Use a salt if there is one.** It need not be secret and can be reused, but it must not be chosen by an attacker and
+  should not depend on the IKM (RFC 5869, section 3.4); HashLen random bytes are ideal. Without a salt HKDF is still
+  sound, with weaker guarantees (section 3.1). An empty salt is the same as none.
+- **Extract a secret, expand a key.** A secret that is not uniformly random, a Diffie-Hellman shared secret above all,
+  goes through `extract`; skipping it would key HMAC with the secret itself (section 3.3). `from_prk` is for a key that
+  is uniformly random already, and refuses one shorter than HashLen (`Error::InvalidPrkLength`).
+- **Bind every key to its purpose and its context with `info`.** Keys derived with different `info` are independent, so a
+  key for one direction, one algorithm or one protocol cannot stand in for another. After a key exchange, `info` (or the
+  salt) is where both public keys go, as RFC 7748 (section 6.1) recommends, so that the keys belong to that exchange.
+  `info` must not depend on the IKM (section 3.2).
+- **The length does not separate keys, and it has a limit.** The same PRK and `info` always give the same bytes, and a
+  shorter output is the start of a longer one: a 16-byte and a 32-byte key derived with the same `info` share their first
+  16 bytes. One PRK gives at most 255 × HashLen bytes; asking for more returns `Error::InvalidLength` and writes nothing.
+  No output at all is allowed.
+- **HKDF does not stretch passwords.** It is fast on purpose and adds no work factor, so a password run through it is as
+  easy to guess as the password itself. A password-based KDF such as PBKDF2, which is on the list above, is for that.
+- **Keys stay in memory for as long as they exist.** An `Hkdf` holds the PRK as a key of HMAC, which is overwritten with
+  zeros when it is dropped, and `Debug` does not print it; HMAC's working copies of the padded key are wiped as well.
+  That is best effort: the hash functions' working values on the stack are not overwritten, nor are the digests they
+  return (each block of output among them), which code generic over `Digest` can read but not overwrite, nor the copy
+  that moving an `Hkdf` can leave behind where it was. The output goes into the caller's buffer, and wiping that is the
+  caller's job.
+
+Nothing that depends on a secret is used as a memory address or as a branch condition: what HKDF does, and every address
+it touches, depends only on the lengths of its inputs and of its output, which are not hidden. Unlike for ECDH, the
+compiled code has not been inspected for that, and no timing measurement backs it up.
+
+### Testing
+
+```sh
+cargo test hkdf::   # RFC 5869, and vectors from Go and OpenSSL for all eight hashes
+```
+
+The known-answer tests are the seven cases of RFC 5869 (Appendix A), for SHA-256 and SHA-1, with inputs longer than a
+block and with an empty salt and info. Each runs through every function of the API: the PRK of Extract, then `expand`,
+`derive`, and `from_prk` with the RFC's PRK. The RFC covers two of the eight hashes, so the rest of the confidence comes
+from vectors that Go's `crypto/hkdf` and OpenSSL 3.6 (`openssl kdf ... HKDF`) both produced, and that agree, for all
+eight:
+
+- **The HMAC key around one block.** Salts of HashLen, of one block and of one byte more, and PRKs of one block and one
+  byte more given to `from_prk`: the longest key HMAC pads, and the shortest it replaces by its digest.
+- **The 255-block limit.** The longest output from each hash, of which block 255 is the only one with that counter; one
+  byte more is refused and nothing is written; and outputs that end at the edges of the first and the last block are
+  the start of the longest one, down to an empty output.
+- **Long inputs.** An IKM and an `info` of 1000 bytes each, for SHA-256 and SHA-512, so that every message HMAC hashes is
+  longer than any block.
+
+The tests also cover the rest of the API: an empty salt gives the PRK of HashLen zeros, `from_prk` refuses a key one byte
+short and takes one of HashLen, and `Debug` shows no secret. That dropping an `Hkdf` wipes its key is not tested: the key
+is on the heap, in the stand-in HMAC, and cannot be read once it is freed. A scratch copy of the code with each of 15
+deliberate breaks (a pad byte changed, a counter starting at 0 or stopping at 254, a length check off by one, keys of
+exactly one block hashed, the stack buffer overrun, ...) fails at least one test for every break but one, which put every
+message on the heap and is not a bug.
+
+### Benchmarking
+
+```sh
+# cryptors: one test thread, so the benchmarks don't compete with each other for the CPU.
+cargo test --release hkdf:: -- --ignored --nocapture --test-threads=1
+cd bench/hkdfcmp && go test -v                  # Go's crypto/hkdf, on its crypto/sha256 and crypto/sha512 as shipped
+```
+
+Both sides run two workloads for SHA-256 and SHA-512, from the same inputs. One expands the PRK of RFC 5869 A.1's inputs
+to the longest output, 8160 or 16320 bytes, 4096 times a pass. The other runs Extract and Expand from a 32-byte secret to
+a 32-byte key, as after a key exchange, 200,000 times a pass, each key being the secret of the next. Each workload has a
+warm-up pass and then five timed ones, of which the best is reported. Both print the last 8 bytes of block 255 and the
+first 8 of the last key of the chain, and the two sides print the same. HKDF has no backend of its own: it runs on the
+backend its hash picks, FEAT_SHA256 and FEAT_SHA512 here, on both sides. `-tags purego` is not run, as there is no
+HKDF code to swap; the hashes have runs of their own, under [SHA-256](#sha-256) and [SHA-512](#sha-512).
+
+On an Apple M1 Pro, against Go 1.27.1's `crypto/hkdf` on the same machine (medians of three interleaved runs, higher is
+better):
+
+<!-- provisional: re-measure in phase 2 -->
+
+| Workload | cryptors | Go stdlib |
+|----------|----------|-----------|
+| HKDF-SHA256, Expand to 8160 bytes | 135 MiB/s | **240 MiB/s** |
+| HKDF-SHA256, Extract and Expand to a 32-byte key | **2.35 M/s** | 1.44 M/s |
+| HKDF-SHA512, Expand to 16320 bytes | 99 MiB/s | **214 MiB/s** |
+| HKDF-SHA512, Extract and Expand to a 32-byte key | **828 k/s** | 641 k/s |
+
+Per workload:
+
+- **Short keys: cryptors is 1.64x (SHA-256) and 1.29x (SHA-512) faster.** No HMAC key is used for more than one block
+  here, so both sides hash the same blocks, and the difference is in the work around the hash. Go's `hkdf.Key`, for one,
+  allocates two HMAC objects and their four hash states on every call.
+- **Long outputs: Go is 1.78x (SHA-256) and 2.17x (SHA-512) faster.** Go's HMAC hashes the padded key once, saves the
+  hash states after it, and restores them for every later block. The stand-in HMAC here cannot, because `Digest` hashes a
+  whole message in one call, so it hashes the padded key again for each of the 255 blocks: four calls of the compression
+  function per block of output, where Go needs two. The rest is the wiping of HMAC's buffers, one volatile byte store at
+  a time; in one run with it removed, Expand was 1.41x (SHA-256) and 1.30x (SHA-512) faster.
+
+These figures are for the stand-in HMAC in `src/hkdf/hmac.rs`, and will move when HKDF switches to the crate's own.
+
+What would make it faster, none of it done: an HMAC that keeps the state of the hash after the padded key, which needs
+`Digest` to hash a message in pieces, and would halve the work of a long Expand; wiping with wider stores than one byte;
+and, for many derivations at once, hashing their blocks side by side as MD5 and SHA-3 do with their `_many` functions,
+which SHA-2 does not have. Within one Expand there is nothing to run side by side, since each block needs the one
+before it.
 
 No x86 figures are given yet, for the same reason as the others: nothing here can time real x86 hardware, and Rosetta 2
 translates the instructions, so its timings say nothing about an x86 CPU. The manual `Benchmarks` workflow

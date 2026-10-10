@@ -51,6 +51,7 @@ src/
                   field of Curve25519 (X25519, Ed25519); private, but ECDH and ECDSA re-export its curve types
   ecdh/           key agreement over P-256, P-384, P-521 and X25519: keys generic over the curve
   ecdsa/          signatures over P-224, P-256, P-384 and P-521: keys and signatures generic over the curve
+  hkdf/           key derivation over any hash that implements `Digest`: one type generic over the hash, no backend
   hmac/           message authentication over any `Digest`: no backends of its own, it runs on the hash's
   md5/
   sha1/
@@ -150,6 +151,15 @@ reaches it through `Digest::INCREMENTAL`, a hidden constant that the crate's has
 implemented elsewhere; the interface is not public, so it can change without breaking anyone.
 >>>>>>> 3ffd809 (hmac documentation)
 
+A key derivation function, `src/hkdf/`, has less in it. There is no backend, because the work is in the hash, which picks
+its own, and no trait, because `Hkdf<D>` is generic over `Digest`. Its files:
+
+| File | Holds |
+|------|-------|
+| `mod.rs` | The documentation, the `mod` declarations and the `pub use` of `Hkdf` and `Error`. |
+| `kdf.rs` | `Hkdf` (Extract, Expand, `derive`, `from_prk`) and `Error`, and the tests: RFC 5869, the vectors from Go and OpenSSL, the limits, `Debug` and the `#[ignore]`d `throughput`. |
+| `hmac.rs` | A private stand-in for the crate's HMAC until that module lands: `Keyed`, with the `new` and `mac_parts` of `crate::hmac::Hmac`, so that switching is deleting this file and changing one `use`. |
+
 The backend modules are private: users see `cryptors::sha2::Sha256`, never the
 path through `sha256`. When several functions share one algorithm, as the six
 SHA-2 functions share two, they share a directory. Each word size then has the
@@ -169,8 +179,13 @@ and has no type parameter: a `SigningKey`, a `VerifyingKey` and a `Signature`, w
 schemes.
 =======
 a type parameter, `D: Digest`, of the functions that sign and verify a message. HMAC is generic over `Digest` rather
+<<<<<<< HEAD
 than implementing it: an `Hmac<D>` holds the two hash states it computed from its key.
 >>>>>>> 3ffd809 (hmac documentation)
+=======
+than implementing it: an `Hmac<D>` holds the two hash states it computed from its key. HKDF takes the hash as a type
+parameter of its one type, `Hkdf<D: Digest>`, which holds the pseudorandom key it was built with.
+>>>>>>> f72b130 (HKDF documentation)
 
 Each algorithm in `bench/` is its own Go module with a throughput test that
 mirrors the Rust one (same buffer, warm-up and best-of-5 method). The AES, ECDH, ECDSA, Ed25519, SHA-2
@@ -187,8 +202,13 @@ signatures of `src/ecdsa/vectors.rs`, which Go made, and the Ed25519 one with RF
 signatures of `src/ed25519/signature.rs`. `make bench-go` runs them all, and so does the manual `Benchmarks`
 =======
 signatures of `src/ecdsa/vectors.rs`, which Go made. (`hmaccmp` does not split either: it measures the hashes, whose
+<<<<<<< HEAD
 own modules time Go's portable code; it checks a known answer for each hash before it times anything.) `make bench-go` runs them all, and so does the manual `Benchmarks`
 >>>>>>> 3ffd809 (hmac documentation)
+=======
+own modules time Go's portable code; it checks a known answer for each hash before it times anything.) The HKDF one checks
+RFC 5869 A.1 and the longest outputs that `longest_output` in `src/hkdf/kdf.rs` expects. `make bench-go` runs them all, and so does the manual `Benchmarks`
+>>>>>>> f72b130 (HKDF documentation)
 workflow (`.github/workflows/bench.yml`) on GitHub's x86-64 and Arm runners.
 
 ## Adding or implementing an algorithm
@@ -308,6 +328,12 @@ both sides of the inner hash's padding boundary), `truncated_tags`, `verify_acce
 `wipe::tests::wipe_bytes_zeroes_every_byte` checks the bulk wipe both use. `cargo test -- hmac:: incremental::` runs
 them all.
 >>>>>>> 3ffd809 (hmac documentation)
+
+HKDF's tests are `rfc_5869` (the seven cases of Appendix A, through every function of the API), `salt_lengths` and
+`prk_lengths` (salts and PRKs of HashLen, one block and one byte more, where HMAC starts hashing its key), `longest_output`
+(255 blocks, one byte more refused, and shorter outputs as its prefixes) and `long_inputs`, all four with vectors from Go
+and OpenSSL for all eight hashes, then `lengths_of_inputs` (an empty salt, a short PRK), `debug_hides_the_prk` and
+`throughput`. There is no wiping test: the key is on the heap, in the stand-in HMAC, and cannot be read once freed.
 
 A cipher with a single implementation has no backend to compare, so `src/des/` swaps
 `scalar_known_answers`, `matches_scalar_backend` and `unaligned_input` for

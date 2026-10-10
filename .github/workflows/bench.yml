@@ -37,6 +37,9 @@ jobs:
         # x86-64, SHA-NI for SHA-1 and SHA-256 where the CPU has it, and the
         # scalar backend for MD5 and the 64-bit SHA-2 functions), and Go's
         # crypto/hmac on Go's hashes, so its figures follow the hashes'.
+        # HKDF has no backend of its own either: it times HMAC-SHA256 and
+        # HMAC-SHA512, so it runs on whichever SHA-2 backends the runner has,
+        # on both sides.
         runner: [ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
     steps:
