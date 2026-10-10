@@ -12,7 +12,7 @@
 //! | KEM | DHKEM(P-384, HKDF-SHA384) | `0x0011` | 48, 97, 48 bytes | [`ecdh::P384`](crate::ecdh::P384) |
 //! | KEM | DHKEM(P-521, HKDF-SHA512) | `0x0012` | 66, 133, 64 bytes | [`ecdh::P521`](crate::ecdh::P521) |
 //! | KEM | DHKEM(X25519, HKDF-SHA256) | `0x0020` | 32, 32, 32 bytes | [`ecdh::X25519`](crate::ecdh::X25519) |
-//! | KDF | HKDF-SHA256, HKDF-SHA384, HKDF-SHA512 | `0x0001` to `0x0003` | exporter secret 32, 48, 64 bytes | [`sha2`](crate::sha2), with HMAC and HKDF private to this module |
+//! | KDF | HKDF-SHA256, HKDF-SHA384, HKDF-SHA512 | `0x0001` to `0x0003` | exporter secret 32, 48, 64 bytes | [`hkdf`](crate::hkdf) and [`hmac`](crate::hmac), on [`sha2`](crate::sha2) |
 //! | AEAD | AES-128-GCM, AES-256-GCM | `0x0001`, `0x0002` | key 16 or 32, nonce 12, tag 16 bytes | [`aes`](crate::aes), with a GCM private to the crate |
 //! | AEAD | export-only | `0xFFFF` | no encryption | |
 //!
@@ -113,7 +113,7 @@
 //! | Part | Implementation |
 //! |------|----------------|
 //! | KEM | [`ecdh`](crate::ecdh) for the four curves, its validation of public keys and its refusal of the point at infinity; `DeriveKeyPair` by the rejection sampling of RFC 9180 section 7.1.3 on the NIST curves |
-//! | KDF | HMAC and HKDF private to this module (`kdf.rs`), generic over [`Digest`](crate::Digest), on the crate's SHA-2 |
+//! | KDF | [`hkdf`](crate::hkdf), on [`hmac`](crate::hmac) and the crate's SHA-2: each pseudorandom key is keyed into HMAC once, and every expansion from it reuses that; the hash is chosen once per key schedule, from the suite |
 //! | AEAD | AES-GCM private to the crate, on the crate's AES: counter mode and GHASH, 1 KiB at a time |
 //!
 //! GHASH, the multiplication in GF(2^128) that authenticates every 16 bytes,
@@ -127,9 +127,8 @@
 //!
 //! The hardware backends multiply sixteen blocks by `H^16` down to `H` and
 //! reduce once, so that the multiplications do not wait on a reduction between
-//! blocks; `scalar` multiplies one block at a time and is about twenty times
-//! slower. The HMAC and HKDF here stand in for the crate's own HMAC and HKDF
-//! modules, and will be replaced by them.
+//! blocks; `scalar` multiplies one block at a time, and is 23 times slower on
+//! an Apple M1 Pro.
 //!
 //! ## Trust
 //!
@@ -141,9 +140,8 @@
 //! Go's `crypto/hpke` both ways in all 36 suites the two have in common,
 //! P-384 and HKDF-SHA384 included. GHASH's backends are checked against
 //! `scalar`, and `scalar` against the bit-by-bit algorithm of NIST SP 800-38D;
-//! AES-GCM against the test cases of its specification and values from Go; the
-//! HMAC and HKDF against RFC 4231, RFC 5869 and Go. ECDH has its own tests,
-//! Wycheproof's among them.
+//! AES-GCM against the test cases of its specification and values from Go.
+//! ECDH, HKDF and HMAC have their own tests, Wycheproof's among ECDH's.
 //!
 //! ## Side channels
 //!

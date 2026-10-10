@@ -50,8 +50,10 @@ src/
   ec/             the arithmetic of the NIST curves that ECDH and ECDSA share (private; they re-export its curve types)
   ecdh/           key agreement over P-256, P-384, P-521 and X25519: keys generic over the curve
   ecdsa/          signatures over P-224, P-256, P-384 and P-521: keys and signatures generic over the curve
+  gcm/            AES-GCM with GHASH backends (private; HPKE's AEAD until the crate has a public one)
   hkdf/           key derivation over any hash that implements `Digest`: one type generic over the hash, no backend
   hmac/           message authentication over any `Digest`: no backends of its own, it runs on the hash's
+  hpke/           hybrid public key encryption over ECDH, HKDF and AES-GCM: a protocol, with its own layout
   md5/
   sha1/
   sha2/           a family of functions: one directory per word size
@@ -144,6 +146,30 @@ its own, and no trait, because `Hkdf<D>` is generic over `Digest`. Its files:
 | `mod.rs` | The documentation, the `mod` declarations and the `pub use` of `Hkdf` and `Error`. |
 | `kdf.rs` | `Hkdf` (Extract, Expand, `derive`, `from_prk`), which holds an `Hmac<D>` keyed with the PRK, and `Error`, and the tests: RFC 5869, the vectors from Go and OpenSSL, the limits, wiping, `Debug` and the `#[ignore]`d `throughput`. |
 
+AES-GCM, `src/gcm/`, is private to the crate: HPKE's AEAD, until the crate has a public one. It has the anatomy of an
+algorithm with backends, for GHASH, whose multiplication in GF(2^128) is what carry-less multiply instructions are for;
+the counter mode is the crate's AES, on whichever of its backends the CPU has.
+
+| File | Holds |
+|------|-------|
+| `mod.rs` | The documentation and the `mod` declarations, and the test helpers its files share. |
+| `aead.rs` | `Gcm`, sealing and opening (counter mode and GHASH over 1 KiB at a time), and the tests of the whole: the specification's test cases and values from Go on every GHASH backend, tampering, the length limits and the `#[ignore]`d `throughput`. |
+| `ghash.rs` | What every GHASH backend shares (the reduction, the powers of `H`, the padding and the length block) and the runtime dispatcher, with `matches_scalar_backend` and `unaligned_input`. |
+| `scalar.rs`, `aarch64.rs`, `x86.rs` | The backends: `ctmul64`, the reference (tested against SP 800-38D's bit-by-bit algorithm), then PMULL and PCLMULQDQ. |
+
+HPKE, `src/hpke/`, is a protocol over three primitives rather than a primitive with backends, and its files follow
+RFC 9180:
+
+| File | Holds |
+|------|-------|
+| `mod.rs` | The documentation, the `mod` declarations and the `pub use` of the suite, the keys, the contexts, the modes and the error. |
+| `suite.rs` | `Suite`, `Kem`, `Kdf` and `Aead`: the identifiers and sizes of section 7, and `LabeledExtract` and `LabeledExpand` (section 4) on `src/hkdf/`, generic over the hash. |
+| `kem.rs` | `PrivateKey`, `PublicKey` and DHKEM (section 4.1) over the curves of `src/ecdh/`: `DeriveKeyPair`, `Encap`, `Decap` and their authenticated forms. |
+| `context.rs` | The modes, the key schedule (section 5.1), `Sender` and `Recipient` with their sequence numbers and exports, and the setup and single-shot functions. |
+| `secret.rs`, `error.rs` | Secret bytes of a length known at run time, wiped on drop; and `Error`. |
+| `tests.rs` | The tests of the whole protocol: the vectors, interoperation with Go, the failures and the `#[ignore]`d `throughput`. |
+| `vectors.rs` | Test data only: RFC 9180's file and Go's, filtered to the crate's scope by a script kept outside the repository. Do not edit it by hand. |
+
 The backend modules are private: users see `cryptors::sha2::Sha256`, never the
 path through `sha256`. When several functions share one algorithm, as the six
 SHA-2 functions share two, they share a directory. Each word size then has the
@@ -159,10 +185,12 @@ was built with. ECDH and ECDSA implement neither: their curves are unit types, b
 name the curve that a `PrivateKey<C>`, a `PublicKey<C>` or a `Signature<C>` belongs to. ECDSA takes the hash as
 a type parameter, `D: Digest`, of the functions that sign and verify a message. HMAC is generic over `Digest` rather
 than implementing it: an `Hmac<D>` holds the two hash states it computed from its key. HKDF takes the hash as a type
-parameter of its one type, `Hkdf<D: Digest>`, which holds the pseudorandom key it was built with.
+parameter of its one type, `Hkdf<D: Digest>`, which holds the pseudorandom key it was built with. HPKE implements neither either, and is
+the one module that picks its algorithms at run time: a suite is negotiated on the wire by its identifiers, so `Suite`,
+`Kem`, `Kdf` and `Aead` are values, and a key of one KEM in a suite of another is an error rather than a type mismatch.
 
 Each algorithm in `bench/` is its own Go module with a throughput test that
-mirrors the Rust one (same buffer, warm-up and best-of-5 method). The AES, ECDH, ECDSA, SHA-2
+mirrors the Rust one (same buffer, warm-up and best-of-5 method). The AES, ECDH, ECDSA, HPKE, SHA-2
 and SHA-3 ones also split into `impl_asm_test.go` and `impl_purego_test.go`, so that
 `-tags purego` selects Go's portable code, the counterpart of our `scalar`
 backend (of our one implementation, for ECDH and ECDSA). (`descmp` does not split: Go's
@@ -173,7 +201,9 @@ passing as a figure, and the ECDSA one does the same with the signatures of
 RFC 6979, the chained signatures of `src/ecdsa/keypair.rs` and the randomized
 signatures of `src/ecdsa/vectors.rs`, which Go made. (`hmaccmp` does not split either: it measures the hashes, whose
 own modules time Go's portable code; it checks a known answer for each hash before it times anything.) The HKDF one checks
-RFC 5869 A.1 and the longest outputs that `longest_output` in `src/hkdf/kdf.rs` expects. `make bench-go` runs them all, and so does the manual `Benchmarks`
+RFC 5869 A.1 and the longest outputs that `longest_output` in `src/hkdf/kdf.rs` expects. The HPKE one opens, with Go's `crypto/hpke`, the messages that
+`src/hpke/tests.rs` seals in all 36 suites the two have in common, and prints an export that both sides compute from the
+same keys. `make bench-go` runs them all, and so does the manual `Benchmarks`
 workflow (`.github/workflows/bench.yml`) on GitHub's x86-64 and Arm runners.
 
 ## Adding or implementing an algorithm
@@ -285,6 +315,20 @@ HKDF's tests are `rfc_5869` (the seven cases of Appendix A, through every functi
 and OpenSSL for all eight hashes, then `lengths_of_inputs` (an empty salt, a short PRK), `dropping_wipes_the_prk` (an
 `Hkdf` is its `Hmac` and nothing else, so every byte of it must be zero after the drop), `debug_hides_the_prk` and
 `throughput`. `cargo test hkdf::` runs them; HMAC's own are above.
+
+HPKE's tests are `rfc9180_appendix_a` (every suite of Appendix A in scope, A.1, A.3, A.4, A.6 and A.7, in the four
+modes, which the script that wrote `vectors.rs` compared with the RFC's text) and `cfrg_vectors` (the rest of RFC 9180's
+file in scope), which also check the KEM's shared secret and the outputs of the key schedule; `go_accumulated` (Go's own
+vectors, a thousand messages and a thousand exports each); `opens_what_go_sealed` and `seals_what_go_opens` (36 suites
+each way, with `bench/hpkecmp` on the other side); `every_change_fails_to_open`, `messages_open_only_in_order`,
+`sequence_number_limit`, `invalid_psk_inputs`, `x25519_small_order_keys_are_rejected`,
+`nist_invalid_public_keys_are_rejected`, `invalid_private_keys_are_rejected`, `keys_of_another_kem_are_refused`,
+`input_keying_material_lengths`, `export_lengths`, `unsupported_algorithms`, `debug_hides_the_secrets` and
+`throughput`; HKDF's and HMAC's own are above. AES-GCM's are
+`gcm::aead::tests::known_answers`, `many_lengths` and `long_messages` (on every GHASH backend), `any_change_fails_to_open`,
+`length_limits` and `throughput`, `gcm::ghash::tests::matches_scalar_backend`, `unaligned_input` and
+`dropping_wipes_the_powers`, and `gcm::scalar::tests::multiplication_matches_algorithm_1` and `dropping_wipes_the_key`.
+`cargo test -- hpke:: gcm::` runs both.
 
 A cipher with a single implementation has no backend to compare, so `src/des/` swaps
 `scalar_known_answers`, `matches_scalar_backend` and `unaligned_input` for

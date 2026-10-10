@@ -94,11 +94,12 @@ impl Kem {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Kdf {
-    /// HKDF-SHA256 (RFC 5869), `0x0001`.
+    /// HKDF-SHA256 (RFC 5869), `0x0001`: [`Hkdf`](crate::hkdf::Hkdf) on
+    /// [`Sha256`](crate::sha2::Sha256).
     HkdfSha256,
-    /// HKDF-SHA384, `0x0002`.
+    /// HKDF-SHA384, `0x0002`: `Hkdf` on [`Sha384`](crate::sha2::Sha384).
     HkdfSha384,
-    /// HKDF-SHA512, `0x0003`.
+    /// HKDF-SHA512, `0x0003`: `Hkdf` on [`Sha512`](crate::sha2::Sha512).
     HkdfSha512,
 }
 
