@@ -77,7 +77,7 @@
 //!   structure, and both sides see it. Run it through a key derivation function
 //!   and include both public keys in what it hashes, as RFC 7748 (section 6.1)
 //!   describes and its section 7 explains the need for, before using any of it
-//!   as a key. This crate does not have one yet.
+//!   as a key. [`cryptors::hkdf`](crate::hkdf) is one.
 //! - **ECDH does not authenticate.** Someone who sits between the two sides can
 //!   play each to the other and end up with a secret in common with both.
 //!   Binding the keys to an identity (signatures, certificates, a pre-shared
