@@ -28,7 +28,7 @@ This library supports the following algorithms and packages:
 | Ed25519 | [RFC 8032](https://www.rfc-editor.org/info/rfc8032): Edwards-curve Digital Signature Algorithm over edwards25519 (Ed25519, Ed25519ctx and Ed25519ph) | Implemented |
 | HKDF | [RFC 5869](https://www.rfc-editor.org/info/rfc5869): HMAC-based Extract-and-Expand Key Derivation Function, over any hash of the crate that implements `Digest` | Implemented |
 | HMAC | [FIPS 198-1](https://csrc.nist.gov/pubs/fips/198-1/final) and [RFC 2104](https://www.rfc-editor.org/info/rfc2104): Keyed-Hash Message Authentication Code, over MD5, SHA-1 and the six SHA-2 functions | Implemented |
-| HPKE | RFC 9180: Hybrid Public Key Encryption | Planned |
+| HPKE | [RFC 9180](https://www.rfc-editor.org/info/rfc9180): Hybrid Public Key Encryption over DHKEM(P-256, P-384, P-521, X25519), HKDF and AES-GCM | Implemented |
 | MD5 | [RFC 1321](https://www.rfc-editor.org/info/rfc1321): The MD5 Message-Digest Algorithm | Implemented |
 | ML-DSA | FIPS 204: post-quantum ML-DSA signature scheme | Planned |
 | ML-KEM | FIPS 203: quantum-resistant key encapsulation method | Planned |
@@ -58,6 +58,8 @@ MD5, the crate takes the parallelism that is actually there instead.
 |-----------|--------|---------|-------------------|
 | AES | aarch64 | ARMv8 Cryptographic Extensions (`aes` / `FEAT_AES`, which Rust reports together with `FEAT_PMULL`) | `AESE`, `AESMC`, `AESD`, `AESIMC` |
 | AES | x86_64 | AES-NI | `AESENC`, `AESENCLAST`, `AESDEC`, `AESDECLAST`, `AESIMC` |
+| AES-GCM's GHASH (HPKE) | aarch64 | ARMv8 Cryptographic Extensions (`aes` / `FEAT_PMULL`, which Rust reports together with `FEAT_AES`) | `PMULL`, `PMULL2` |
+| AES-GCM's GHASH (HPKE) | x86_64 | PCLMULQDQ, with SSSE3 | `PCLMULQDQ`, `PSHUFB` |
 | SHA-1 | aarch64 | ARMv8 Cryptographic Extensions (`sha2` / `FEAT_SHA1`) | `SHA1C`, `SHA1P`, `SHA1M`, `SHA1H`, `SHA1SU0`, `SHA1SU1` |
 | SHA-1 | x86_64 | SHA extensions (SHA-NI) | `SHA1RNDS4`, `SHA1NEXTE`, `SHA1MSG1`, `SHA1MSG2` |
 | SHA-224, SHA-256 | aarch64 | ARMv8 Cryptographic Extensions (`sha2` / `FEAT_SHA256`) | `SHA256H`, `SHA256H2`, `SHA256SU0`, `SHA256SU1` |
@@ -126,6 +128,15 @@ implementation, five limbs of 51 bits and `u128` products, and no row in the tab
 FEAT_SHA512 the hashing of a signature runs on the instructions, which makes it a small part of the time (about 0.4 µs of
 10). See the Benchmarking part of [Ed25519](#ed25519).
 
+HPKE has its curves from ECDH, its KDF from HKDF and HMAC on SHA-2, and its cipher from AES, and adds one thing that
+hardware does: the GHASH of AES-GCM, a multiplication in GF(2^128) for every 16 bytes, which is exactly what carry-less
+multiply instructions compute, `PMULL` on Arm and `PCLMULQDQ` on x86. A product of two blocks is four of them, and the
+backends multiply sixteen blocks by the powers `H^16` down to `H` of the key before they reduce the sum once, so that
+the multiplications of one block never wait on a reduction. In software the same multiplication is many integer
+multiplications of masked operands (the `ctmul64` design of BearSSL), as the usual tables of multiples of the key would
+be looked up at positions given by the data. The instructions make GHASH 23 times faster here, and sealing ten times.
+See the Benchmarking part of [HPKE](#hpke).
+
 ### Multi-buffer SIMD, where no instruction exists
 
 Not every algorithm has silicon behind it on every target. **No shipping CPU implements MD5**, and no x86 CPU
@@ -183,8 +194,9 @@ Three rules govern how all of this is done, so that acceleration never costs cor
    (`sha2` on `aarch64-apple-darwin`, for instance) the check folds away at compile time and costs nothing.
 3. **Every backend is differential-tested against the scalar reference** — byte-for-byte, across input lengths
    that straddle every block and padding boundary, for the multi-buffer backends across batches whose
-   messages differ in length, so that lanes run out of blocks at different times, and for AES across keys of
-   all three sizes, comparing the round keys as well as the blocks. A backend that disagreed with
+   messages differ in length, so that lanes run out of blocks at different times, for AES across keys of
+   all three sizes, comparing the round keys as well as the blocks, and for GHASH across lengths around its groups
+   of sixteen blocks and from a running value that is not zero. A backend that disagreed with
    the specification would fail the test suite, not silently produce wrong digests.
 
 Because the vector instructions are intrinsics, these backends are where nearly all of the crate's `unsafe` lives.
@@ -196,6 +208,8 @@ Its scope is kept deliberately narrow:
   is in bounds by construction.
 - The AES backends take their block and their round keys as fixed-size arrays, so each 16-byte load and store is in
   bounds by construction.
+- The GHASH backends take whole blocks and the powers of the key as fixed-size arrays, which safe code has split and
+  padded, so each 16-byte load is in bounds by construction too.
 
 In every case the only obligation left is the one the dispatcher has already discharged: that the CPU feature is
 available.
@@ -204,12 +218,13 @@ There are two other uses. One is an empty block of inline assembly in SHA-256's 
 FEAT_SHA256. It emits no instruction, touches no memory, and only stops the compiler from rearranging equivalent
 arithmetic into a slower order (`src/sha2/sha256/scalar.rs` and `src/sha2/sha256/aarch64.rs`). The other is the
 volatile write that overwrites an AES or DES cipher's round keys, an ECDH or ECDSA private key or ECDH shared secret,
-an Ed25519 signing key or the hash states of an HMAC key, with zeros when it is dropped, which the compiler would
-otherwise delete as a store nobody reads (`src/aes/schedule.rs`, `src/des/schedule.rs` and, for ECDH, ECDSA, Ed25519
-and HMAC, `src/wipe.rs`). For the states of HMAC, which are a few hundred bytes and wiped twice for every tag,
-`src/wipe.rs` views the bytes as 16-byte words where they are aligned for it (`align_to_mut`), so that a wipe is one
-store per 16 bytes instead of one per byte. Outside their tests, none of ECDH, ECDSA, Ed25519 and HMAC has intrinsics
-or anything else that is `unsafe`.
+an Ed25519 signing key, the hash states of an HMAC key, or a secret of HPKE or of its AES-GCM, with zeros when it is
+dropped, which the compiler would otherwise delete as a store nobody reads (`src/aes/schedule.rs`,
+`src/des/schedule.rs` and, for the others, `src/wipe.rs`). For the states of HMAC, which are a few hundred bytes and
+wiped twice for every tag, `src/wipe.rs` views the bytes as 16-byte words where they are aligned for it
+(`align_to_mut`), so that a wipe is one store per 16 bytes instead of one per byte. Outside their tests, none of ECDH,
+ECDSA, Ed25519 and HMAC has intrinsics or anything else that is `unsafe`, and neither does HPKE outside the GHASH
+backends.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -247,6 +262,13 @@ cryptors
 │   ├── Hmac<D>                      keyed once, with the hash's states after the padded key
 │   ├── hmac                         the one-call form
 │   └── VerifyError
+├── hpke                             encryption to a public key: a protocol over ecdh, HKDF and AES-GCM
+│   ├── Suite, Kem, Kdf, Aead        the suite and its three parts, values chosen at run time from their identifiers
+│   ├── PrivateKey, PublicKey        keys that belong to one KEM each
+│   ├── Sender, Recipient            the two sides of a context
+│   ├── Mode, SenderMode,            the mode, and its inputs on each side
+│   │   RecipientMode
+│   └── Error
 ├── md5
 │   └── Md5
 ├── sha1
@@ -327,6 +349,11 @@ memory without copying it. See [HMAC](#hmac).
 Key derivation takes the hash as a type parameter of the type itself. HKDF is HMAC with a hash, and the hash is the one
 choice there is to make, so an `Hkdf<D>` is generic over any `D: Digest`: `Hkdf::<Sha256>::extract(salt, secret)` holds
 the pseudorandom key, and `expand(info, &mut key)` fills a buffer with a key for one purpose. See [HKDF](#hkdf).
+
+Encryption to a public key is a protocol over all of these. HPKE's suite is a value of three parts, a KEM on one of ECDH's
+curves, an HKDF on one of the SHA-2 hashes and an AEAD on AES, chosen at run time because a protocol negotiates it by
+identifiers; a sender's `setup_sender` gives a `Sender` that seals messages, and the recipient's `setup_recipient` a
+`Recipient` that opens them. See [HPKE](#hpke).
 
 ## AES
 
@@ -1846,6 +1873,278 @@ What would make it faster, none of it done:
 No x86 figures are given yet, for the same reason as the others: nothing here can time real x86 hardware, and Rosetta 2
 translates the instructions, so its timings say nothing about an x86 CPU. The manual `Benchmarks` workflow
 (`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
+
+## HPKE
+
+HPKE, Hybrid Public Key Encryption, lets anyone who knows a public key encrypt messages that only the holder of the
+private key can read, with no exchange before the first message. It is hybrid in the usual sense: a key encapsulation
+mechanism (KEM) gives the sender and the recipient a secret in common, a key derivation function (KDF) turns it into the
+keys of an authenticated cipher (AEAD), and the AEAD encrypts the messages. It is the public-key encryption under TLS
+Encrypted Client Hello, MLS and Oblivious HTTP. It is a protocol built on other algorithms, not a primitive, so it
+implements neither `Digest` nor `BlockCipher`: a suite is a value of three parts (`Suite` of a `Kem`, a `Kdf` and an
+`Aead`), the keys are types that belong to one KEM each, and a context is a `Sender` or a `Recipient`.
+
+| KEM | Type | Identifier | Private key | Public and encapsulated key | Shared secret | Built on |
+|-----|------|------------|-------------|-----------------------------|---------------|----------|
+| DHKEM(P-256, HKDF-SHA256) | `Kem::P256HkdfSha256` | `0x0010` | 32 bytes | 65 bytes | 32 bytes | `ecdh::P256` |
+| DHKEM(P-384, HKDF-SHA384) | `Kem::P384HkdfSha384` | `0x0011` | 48 bytes | 97 bytes | 48 bytes | `ecdh::P384` |
+| DHKEM(P-521, HKDF-SHA512) | `Kem::P521HkdfSha512` | `0x0012` | 66 bytes | 133 bytes | 64 bytes | `ecdh::P521` |
+| DHKEM(X25519, HKDF-SHA256) | `Kem::X25519HkdfSha256` | `0x0020` | 32 bytes | 32 bytes | 32 bytes | `ecdh::X25519` |
+
+| KDF or AEAD | Type | Identifier | Sizes | Built on |
+|-------------|------|------------|-------|----------|
+| HKDF-SHA256 | `Kdf::HkdfSha256` | `0x0001` | 32-byte hash and exporter secret | `hkdf` on `hmac` and `sha2` |
+| HKDF-SHA384 | `Kdf::HkdfSha384` | `0x0002` | 48 bytes | the same |
+| HKDF-SHA512 | `Kdf::HkdfSha512` | `0x0003` | 64 bytes | the same |
+| AES-128-GCM | `Aead::Aes128Gcm` | `0x0001` | 16-byte key, 12-byte nonce, 16-byte tag | `aes`, with an AES-GCM private to the crate |
+| AES-256-GCM | `Aead::Aes256Gcm` | `0x0002` | 32-byte key, 12-byte nonce, 16-byte tag | the same |
+| Export-only | `Aead::ExportOnly` | `0xFFFF` | no encryption at all, exports only | |
+
+HPKE is specified in [RFC 9180](https://www.rfc-editor.org/info/rfc9180), its KDF in
+[RFC 5869](https://www.rfc-editor.org/info/rfc5869), its AEAD in
+[NIST SP 800-38D](https://csrc.nist.gov/pubs/sp/800/38/d/final), and the curves of its KEMs are those of [ECDH](#ecdh).
+Every combination of the three parts is a suite, in any of four modes: Base, which says nothing about the sender; PSK,
+in which the sender also proves it holds a pre-shared key; Auth, in which it proves it holds a private key whose public
+key the recipient knows; and AuthPSK, both. ChaCha20-Poly1305, X448 and the post-quantum KEMs (ML-KEM and its hybrids)
+are not implemented. The KDF is the crate's [HKDF](#hkdf), on its [HMAC](#hmac); AES-GCM is private to the crate,
+which has no public modes of operation yet.
+
+The keys are encoded as in ECDH: an uncompressed point on the NIST curves, 32 bytes for X25519. A public key from the
+network is validated when it is turned into a `PublicKey`, and so is the encapsulated key `enc` that the recipient
+receives, which is a public key too; the X25519 secret of all zeros that a point of small order forces is refused where
+it is computed. A context encrypts each message under the next nonce, a base nonce XORed with a 96-bit counter, so the
+recipient must open the messages in the order they were sealed, and a context stops after `2^96 - 1` of them. Both sides
+can export further secrets from a context, up to 255 hash lengths each. The parts of a suite are values, not types, because
+HPKE negotiates its suite on the wire by the identifiers in the tables: `Suite::from_ids` takes them, and a key of one KEM
+in a suite of another is the error `KemMismatch` at run time rather than a compile error, as it is in ECDH.
+
+The standard library has no secure random source that is stable and the `Rand` item above is still planned, so HPKE takes
+every secret it would draw at random from the caller, as ECDH's key generation takes a reader: a key pair comes from
+`Kem::derive_key_pair` and some random bytes, and every sender's setup takes `ikm_e`, random bytes from which the
+ephemeral key pair of the encapsulation is derived (RFC 9180, section 7.1.3). Nothing else is random, which is also what
+lets the published test vectors of RFC 9180 be checked through the sender's setup itself.
+
+### Usage
+
+```rust
+use cryptors::hpke::{Aead, Kdf, Kem, PublicKey, RecipientMode, SenderMode, Suite};
+
+fn main() -> Result<(), cryptors::hpke::Error> {
+    // The recipient makes a key pair and publishes its public key. In real use the input comes from a
+    // cryptographically secure random source.
+    let suite = Suite::new(Kem::P256HkdfSha256, Kdf::HkdfSha256, Aead::Aes128Gcm);
+    let sk_r = Kem::P256HkdfSha256.derive_key_pair(&[0x11; 32])?;
+    let published = sk_r.public_key().as_bytes().to_vec();
+
+    // The sender receives the bytes (this is where an invalid point is refused), and seals two messages,
+    // with fresh random bytes for the setup.
+    let pk_r = PublicKey::from_bytes(Kem::P256HkdfSha256, &published)?;
+    let (enc, mut sender) = suite.setup_sender(&pk_r, b"example v1", SenderMode::Base, &[0x22; 32])?;
+    let first = sender.seal(b"message 1", b"attack at dawn")?;
+    let second = sender.seal(b"message 2", b"bring coffee")?;
+
+    // The recipient, from `enc` and the same `info`, opens them in order.
+    let mut recipient = suite.setup_recipient(&enc, &sk_r, b"example v1", RecipientMode::Base)?;
+    assert_eq!(recipient.open(b"message 1", &first)?, b"attack at dawn");
+    assert_eq!(recipient.open(b"message 2", &second)?, b"bring coffee");
+    assert_eq!(sender.export(b"reply key", 16)?, recipient.export(b"reply key", 16)?);
+
+    // One message in the PSK mode, with the single-shot functions and X25519.
+    let suite = Suite::new(Kem::X25519HkdfSha256, Kdf::HkdfSha256, Aead::Aes256Gcm);
+    let sk_r = Kem::X25519HkdfSha256.derive_key_pair(&[0x33; 32])?;
+    let (psk, psk_id) = (&[0x44; 32][..], &b"key 7"[..]);
+    let (enc, ct) = suite.seal(sk_r.public_key(), b"", b"", b"hi", SenderMode::Psk { psk, psk_id }, &[0x55; 32])?;
+    assert_eq!(suite.open(&enc, &sk_r, b"", b"", &ct, RecipientMode::Psk { psk, psk_id })?, b"hi");
+    Ok(())
+}
+```
+
+Real keys and setups take random bytes from a source of your own, as many as a private key of the KEM has
+(`Kem::private_key_len`, 32 for X25519 and P-256, 48 for P-384, 66 for P-521):
+
+```rust
+use cryptors::hpke::Kem;
+use std::{fs::File, io::Read};
+
+let mut rng = File::open("/dev/urandom")?;                 // on Unix; any source of secure random bytes will do
+let mut ikm = vec![0u8; Kem::P384HkdfSha384.private_key_len()];
+rng.read_exact(&mut ikm)?;
+let sk_r = Kem::P384HkdfSha384.derive_key_pair(&ikm)?;
+// Read fresh bytes the same way for the `ikm_e` of every setup_sender.
+```
+
+`examples/hpke.rs` checks one vector of RFC 9180, then runs every KEM in every mode, with keys and entropy from
+`/dev/urandom`: `cargo run --release --example hpke`.
+
+### Security
+
+HPKE is not broken. RFC 9180 (section 9.1) cites proofs that its modes keep messages and exported secrets confidential
+against active attackers, and that the PSK, Auth and AuthPSK modes authenticate the sender, as long as the KEM, the KDF
+and the AEAD are sound; none of those here has a known practical attack. Like ECDH, none of the four KEMs resists a large
+quantum computer, and HPKE's post-quantum KEMs are not here.
+
+Seven things to know when using it:
+
+- **The randomness is the caller's.** `ikm_e` must be fresh, uniformly random bytes from a cryptographically secure
+  source, at least `Kem::private_key_len` of them, for every setup of a sender, and never used twice or for anything
+  else. Two setups with the same `ikm_e` and inputs make the same context, whose first messages are then encrypted under
+  the same AES-GCM key and nonce, which breaks both the confidentiality and the integrity of AES-GCM; a guessable `ikm_e`
+  lets anyone decrypt the Base and PSK modes. The same goes for the input of `derive_key_pair` and for a pre-shared key,
+  which must have at least 32 bytes of entropy: a password is not one, because HKDF does nothing to slow down guessing,
+  and AES-GCM, which is not key-committing, makes guessing cheaper still (RFC 9180, section 9.5). The crate refuses
+  inputs and pre-shared keys shorter than 32 bytes and than a private key, where the RFC only says they should not be.
+- **A context is a sequence, and its nonces must never repeat.** The recipient opens messages in the order they were
+  sealed, each once; a failed `open` leaves it expecting the same message, and a lost or reordered one makes the context
+  useless. `Sender` and `Recipient` are not `Clone`, because two copies of a sender would seal two messages under one
+  nonce. A context refuses its `2^96`th message.
+- **Base mode authenticates nobody.** Anyone with the public key can send. The PSK modes prove that the sender has the
+  pre-shared key, the Auth modes that it has a private key; a wrong key, PSK or sender shows as `Error::Open` on the first
+  message, not at setup. Auth's assurance has a known limit, key-compromise impersonation: whoever has the recipient's
+  private key can forge messages to it from any sender (section 9.1.1). Sign `(enc, ct)` where that matters.
+- **There is no forward secrecy for the recipient.** Whoever gets the recipient's private key later can decrypt every
+  message ever sent to it (in the PSK modes, with the PSK as well). The sender's side is forward secret: its ephemeral key
+  pair exists only during the setup.
+- **There is no replay protection and no hiding of lengths.** Beyond the order within one context, nothing stops a
+  message from being delivered twice to two contexts, and a ciphertext is as long as its plaintext plus 16 bytes. `info`,
+  the associated data and the exporter context bind what they are given, and nothing else.
+- **The code is written not to depend on secrets, and that is checked in fewer ways than for ECDH.** No branch condition
+  or memory address is derived from a secret in HPKE's own code, in ECDH's arithmetic (see its section for how that was
+  checked) or in GHASH: the hardware backends multiply with instructions that take the same time for every operand, and
+  the scalar one with integer multiplications of masked operands instead of the usual tables of multiples of the key,
+  which relies on the CPU multiplying 64-bit integers in constant time, as current aarch64 and x86-64 cores do. Tags are
+  compared in constant time. The exceptions are known: AES runs on the crate's AES, whose scalar backend, on a CPU without
+  AES instructions, looks up tables at positions given by the key and the data (see [AES](#aes)); and `DeriveKeyPair` on a
+  NIST curve takes longer when it rejects a candidate, which happens with a probability of about 2^-32 on P-256 and far
+  less on the others, and says nothing about the key it finally derives. For GHASH that is a property of the source and of
+  the instructions; the compiled code was looked at only for the aarch64 loop, and no timing measurement backs any of it.
+- **Keys and secrets stay in memory for as long as they exist.** A private key, and every secret of a context (the AES
+  round keys, the GHASH key and its powers, the base nonce, the exporter secret and the intermediate values of the key
+  schedule), are overwritten with zeros when dropped, and `Debug` does not print them; a plaintext that fails its tag is
+  overwritten before it is freed. That is best effort, as for ECDH: the working values on the stack and in registers, the
+  copy a move leaves behind, and the bytes handed back to the caller (plaintexts, exports, serialized keys) are out of
+  reach.
+
+### Testing
+
+```sh
+cargo test -- hpke:: gcm::   # RFC 9180's vectors, Go's, interop with Go both ways, the failures, and AES-GCM's backends
+```
+
+The known-answer tests are the vectors of RFC 9180's test-vector file in this crate's scope, 72 of them over
+DHKEM(P-256), DHKEM(P-521) and DHKEM(X25519) (the file has none for P-384 and none with HKDF-SHA384), each in the four
+modes. Among them are the suites that the RFC prints in Appendix A, A.1, A.3, A.4, A.6 and A.7, whose values the script
+that filtered the file compared with the RFC's text: the encryptions at sequence numbers 0, 1, 2, 4, 255 and 256, the
+exports, and the intermediate values of the KEM and the key schedule, which the tests check too. The rest of the
+confidence comes from:
+
+- **Go.** Go's own vectors for its `crypto/hpke` add a thousand messages of random lengths and a thousand exports of every
+  length up to 999 bytes per suite. Go's `crypto/hpke` sealed messages in the 36 suites the two have in common (four KEMs,
+  three KDFs, three AEADs), P-384 and HKDF-SHA384 included, and cryptors opens them; cryptors seals the same set, and
+  `bench/hpkecmp` opens it with Go. Go's API has the Base mode only, so the other modes rest on RFC 9180's file.
+- **Failures.** Changing any byte of a ciphertext, or the encapsulated key, the associated data, `info`, the PSK, its
+  identifier, the sender's key, the recipient's key or the mode makes `open` fail, in each mode; so does opening out of
+  order or twice. A context stops at sequence number `2^96 - 1`. The tests also cover the PSK rules, the X25519 points of
+  small order wherever they can come in, NIST public keys that are off the curve, compressed, the point at infinity or of
+  the wrong length (as public keys and as `enc`), invalid private keys, keys of another KEM, inputs shorter than a
+  private key, the limit on exports, unknown identifiers and `Debug`.
+- **The building blocks.** AES-GCM against the test cases of its specification and values from Go for 301 short and 9
+  long messages, on every GHASH backend, with every byte of a sealed message changed; every hardware GHASH backend against
+  the scalar one, over lengths around the groups of 16 blocks and at every alignment; the scalar multiplication against
+  the bit-by-bit algorithm of SP 800-38D, on dense operands where carries pile up. ECDH, HKDF and HMAC have their own
+  tests, Wycheproof's among ECDH's.
+
+The x86-64 GHASH backend passes the same tests under Rosetta 2 (`cargo test --target x86_64-apple-darwin -- hpke:: gcm::`),
+which supports PCLMULQDQ; it has not run on an x86 CPU. The tests were checked against the bugs they guard, by breaking
+the code in a scratch copy in 43 places (constants, masks, labels, limits, the order of the inputs to a hash, the
+chunking of long messages, the wipes; some of them in a private KDF that the crate's HKDF has since replaced) and seeing
+which tests fail: every break but two failed at least one. The two are
+the wipe of a plaintext whose tag does not match, which no test can see, and a check of the length of an export that the
+KDF makes again. Nor is it tested that `seal` refuses a message over the AES-GCM limit, which would take 64 GiB; the
+limit itself is.
+
+### Benchmarking
+
+```sh
+# cryptors: HPKE, then the parts of its AES-GCM alone. One test thread, so the benchmarks don't compete with each other
+# for the CPU.
+cargo test --release -- hpke:: gcm:: --ignored --nocapture --test-threads=1
+cd bench/hpkecmp && go test -v                       # Go's crypto/hpke as shipped, with its assembly
+cd bench/hpkecmp && go test -tags purego -v          # Go's portable code, with no assembly
+```
+
+Both sides time the same work, in Base mode with the same keys, `info` and messages, and take the best of five passes after
+a warm-up pass: a setup (a sender's `SetupBaseS` and a recipient's `SetupBaseR`, each with the KEM's own KDF and
+AES-128-GCM) repeated 1000 times per pass for X25519, 400 for P-256, 100 for P-384 and 50 for P-521; and 64 MiB sealed,
+then opened, as 1024 messages of 64 KiB through one context, with DHKEM(X25519), HKDF-SHA256 and each of the two AEADs.
+Go draws the ephemeral key of a sender from `crypto/rand` and cannot be given one, so its ciphertexts differ from run to
+run and from ours, and Go's setup includes reading those random bytes; what both sides print to cross-check is, for each
+KEM, an export of a recipient's context for a fixed `enc`, which is deterministic. All runs printed the same.
+
+On an Apple M1 Pro, against Go 1.27.1's `crypto/hpke` on the same machine (medians of five interleaved runs; setups in
+microseconds, lower is better, and messages in MiB/s, higher is better):
+
+| Workload | cryptors | Go stdlib | Go portable (`purego`) |
+|----------|----------|-----------|------------------------|
+| Setup, DHKEM(X25519), HKDF-SHA256 | **97.8** | 114.7 | 127.7 |
+| Setup, DHKEM(P-256), HKDF-SHA256 | 265.3 | **102.5** | 268.5 |
+| Setup, DHKEM(P-384), HKDF-SHA384 | 900.5 | **782.4** | 797.3 |
+| Setup, DHKEM(P-521), HKDF-SHA512 | 2301.5 | **2179.6** | 2193.0 |
+| Seal, AES-128-GCM | **5613** | 5359 | 97 |
+| Open, AES-128-GCM | 5738 | **6318** | 97 |
+| Seal, AES-256-GCM | 4676 | **4798** | 87 |
+| Open, AES-256-GCM | 4690 | **5320** | 88 |
+
+Run-to-run spread was within 1.2% in every cell but Go's AES-128-GCM seal, 3%.
+
+The AES-GCM throughput test times the parts of a seal alone, over the same 64 KiB messages (cryptors only: Go's GCM is one
+assembly routine, with no parts to time):
+
+| Part | MiB/s |
+|------|-------|
+| GHASH, `aarch64` backend (PMULL) | 13165 |
+| GHASH, `scalar` backend (`ctmul64`) | 562 |
+| AES-128 in counter mode (FEAT_AES) | 12034 |
+| AES-128-GCM seal, `aarch64` GHASH / `scalar` GHASH | 5586 / 530 |
+| AES-128-GCM open, `aarch64` GHASH / `scalar` GHASH | 5753 / 537 |
+
+These spread by 0.5% or less but for the counter mode alone, where two of the five runs came out 10% low.
+
+Per workload:
+
+- **Sealing and opening: from 5% ahead of Go to 12% behind, where it was ten times behind.** Before the GHASH
+  backends, with GHASH in software, this crate sealed at 551 MiB/s and opened at 557 (medians of three runs, earlier on
+  the same machine); the PMULL backend took that to 5613 and 5738, 10.2 and 10.3x. GHASH and the counter mode now cost
+  about the same per byte, 13165 and 12034 MiB/s alone, and the seal reaches 89% of what doing one after the other would
+  give (6287), going through each 1 KiB of a message once to copy, encrypt and hash it while it is in the L1 cache. Go
+  opens faster than it seals; cryptors does both at about the same speed. What remains is the shape of the loops: Go's
+  arm64 GCM is one assembly loop over eight blocks, their AES rounds side by side and then their GHASH, reduced in vector
+  registers, while here the counter mode encrypts one block per call to the crate's AES and GHASH reduces in
+  general-purpose registers, two loops that the CPU overlaps only as far as its reorder window reaches. With GHASH on the
+  scalar backend, which is what a CPU without PMULL gets, the seal is 530 MiB/s, still 5.5x Go's portable code: the
+  counter mode runs on the AES instructions, which Go's `purego` build gives up.
+- **Setup is the KEM, and follows ECDH.** Each setup is three multiplications on the curve (the ephemeral public key and a
+  Diffie-Hellman on each side), eighteen HMAC tags, and the expansion of an AES key on each side; the numbers line up with
+  ECDH's. X25519 is 17% faster than Go's, both portable code on this machine (Go's X25519 assembly is for x86-64 only).
+  P-256 is level with Go's portable code and 2.6x behind its assembly, which Go has for P-256 on arm64. P-384 and P-521
+  are 15% and 6% behind Go, which has no assembly for them either. Go's figure includes drawing random bytes from
+  `crypto/rand` for each sender; ours does not. The tags come from the crate's HKDF, which keys HMAC with each
+  pseudorandom key once and expands every block from there. Against a private HMAC and HKDF that HPKE had before, which
+  hashed the padded key again for every tag, the setups took 2.6% (P-521) to 5.5% (X25519) less time, but Go's took 2.3
+  to 2.9% less as well between the two sessions, so the change itself is worth about 3% on X25519, where hashing is the
+  largest share of the work, and 1% or less on the NIST curves. Before ECDH's X25519 replaced one that HPKE had of its
+  own, the X25519 setup took 105.5 µs (medians of three runs, two sessions earlier).
+
+What would make it faster, none of it done: one loop that does the AES rounds of a group of blocks side by side and then
+their GHASH, as Go's assembly does; the reduction of GHASH in vector registers, with PMULL by the constant of GCM's
+polynomial, instead of moving the sum to general-purpose registers every 16 blocks; an AES entry point that takes
+several counter blocks at once, which matters wherever the AES instructions are not part of the target's baseline (x86-64,
+Linux on aarch64): there the counter mode reaches AES through the run-time dispatcher once per block, and the call is not
+inlined; and, for setup, what the ECDH section lists for the NIST curves.
+
+No x86 figures are given yet, for the same reason as the others: nothing here can time real x86 hardware, and Rosetta 2
+translates the instructions, so its timings say nothing about an x86 CPU. The manual `Benchmarks` workflow
+(`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners, where AES-GCM uses PCLMULQDQ and
+PMULL if the runner has them, and where AES is not in the target's baseline, so the per-block dispatch above applies.
 
 ## MD5
 

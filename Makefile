@@ -43,14 +43,14 @@ bench-throughput:
 	cargo test --release -- --ignored --nocapture --test-threads=1
 
 # The Go standard-library counterparts, same buffer sizes and methodology.
-# `-tags purego` is Go's portable AES, ECDH, ECDSA, Ed25519, SHA-2 and SHA-3,
-# the counterpart of our scalar backends (for ECDH, ECDSA and Ed25519, of our
-# one implementation). On x86-64, `GODEBUG=cpu.sha=off` makes Go's SHA-256
-# skip SHA-NI and run its AVX2 path, the counterpart of our AVX2 backend; other
-# architectures have no such path, so the run is skipped there. Go's DES is
-# portable code on every platform, so it has no `purego` run. HMAC and HKDF have
-# none either: they run on the hashes, whose own runs already time Go's portable
-# code.
+# `-tags purego` is Go's portable AES, ECDH, ECDSA, Ed25519, HPKE, SHA-2 and
+# SHA-3, the counterpart of our scalar backends (for ECDH, ECDSA and Ed25519, of
+# our one implementation; for HPKE, of our scalar GHASH). On x86-64,
+# `GODEBUG=cpu.sha=off` makes Go's SHA-256 skip SHA-NI and run its AVX2 path,
+# the counterpart of our AVX2 backend; other architectures have no such path,
+# so the run is skipped there. Go's DES is portable code on every platform, so
+# it has no `purego` run. HMAC and HKDF have none either: they run on the
+# hashes, whose own runs already time Go's portable code.
 bench-go:
 	cd bench/aescmp && go test -v
 	cd bench/aescmp && go test -tags purego -v
@@ -63,6 +63,8 @@ bench-go:
 	cd bench/ed25519cmp && go test -tags purego -v
 	cd bench/hkdfcmp && go test -v
 	cd bench/hmaccmp && go test -v
+	cd bench/hpkecmp && go test -v
+	cd bench/hpkecmp && go test -tags purego -v
 	cd bench/sha1cmp && go test -v
 	cd bench/md5cmp && go test -v
 	cd bench/sha256cmp && go test -v

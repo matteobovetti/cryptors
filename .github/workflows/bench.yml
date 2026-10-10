@@ -44,6 +44,11 @@ jobs:
         # HKDF has no backend of its own either: it times HMAC-SHA256 and
         # HMAC-SHA512, so it runs on whichever SHA-2 backends the runner has,
         # on both sides.
+        # HPKE's AES-GCM uses PCLMULQDQ on x86-64 and PMULL on aarch64 where
+        # the runner has them, and its throughput test times the scalar GHASH
+        # beside them. Unlike on macOS, AES is not in either target's baseline
+        # there, so the counter mode reaches the AES backend through the
+        # run-time dispatcher once per block; the figures show what that costs.
         runner: [ubuntu-latest, ubuntu-24.04-arm]
     runs-on: ${{ matrix.runner }}
     steps:
