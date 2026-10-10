@@ -235,7 +235,6 @@ cryptors
 │   │   Signature
 │   ├── P224, P256, P384, P521       the curves, which implement the sealed trait `Curve` (ecdh has three of these types)
 │   └── Error
-<<<<<<< HEAD
 ├── hkdf                             key derivation: generic over the hash, as in Hkdf<Sha256>
 │   ├── Hkdf                         a pseudorandom key, extracted or given, ready to expand into keys
 │   └── Error
@@ -243,7 +242,6 @@ cryptors
 │   ├── Hmac<D>                      keyed once, with the hash's states after the padded key
 │   ├── hmac                         the one-call form
 │   └── VerifyError
->>>>>>> 3ffd809 (hmac documentation)
 ├── md5
 │   └── Md5
 ├── sha1
@@ -1471,7 +1469,7 @@ the hashes in pieces, the wipes) and seeing it fail.
 
 ```sh
 # cryptors: one test thread, so the benchmarks don't compete with each other for the CPU.
-<<<<<<< HEAD
+
 cargo test --release ed25519 -- --ignored --nocapture --test-threads=1
 cd bench/ed25519cmp && go test -v -run TestThroughput               # Go's crypto/ed25519 as shipped
 cd bench/ed25519cmp && go test -tags purego -v -run TestThroughput  # Go with no assembly
@@ -1616,7 +1614,6 @@ What would make it faster, none of it done:
   one-shot hash did, skips building two states; that is the 3% of the SHA-256 row keyed for each.
 - **Many messages at once.** MD5 hashes up to 16 messages side by side on NEON (`Md5::digest_many`), and HMAC-MD5 of a
   batch of messages could do the same; MD5 is the one hash here where that applies.
->>>>>>> 3ffd809 (hmac documentation)
 
 No x86 figures are given yet, for the same reason as the others: nothing here can time real x86 hardware, and Rosetta 2
 translates the instructions, so its timings say nothing about an x86 CPU. The manual `Benchmarks` workflow
