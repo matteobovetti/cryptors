@@ -267,7 +267,6 @@
 //! ```
 
 mod curve;
-mod fe25519;
 mod keypair;
 mod nist;
 #[cfg(test)]

@@ -1,4 +1,5 @@
-//! Arithmetic modulo `2^255 - 19`, the field of Curve25519, for X25519.
+//! Arithmetic modulo `2^255 - 19`, the field of Curve25519 and of its twisted
+//! Edwards form edwards25519, for X25519 (in `ecdh`) and Ed25519.
 //!
 //! A number is five limbs of 51 bits: `x = l0 + l1 * 2^51 + ... + l4 * 2^204`.
 //! Five limbs of 51 bits cover 255 bits, which is the size of the prime, and
@@ -10,22 +11,25 @@
 //! there is.
 //!
 //! Limbs are not kept below `2^51`. A *weakly reduced* number has every limb
-//! below `2^51 + 2^13`, which is what `mul`, `square`, `sub` and `mul_small`
-//! return, and sums of two such numbers (below `2^53`) can go straight into
-//! the next operation. `mul` and `square` accept limbs up to `2^54`. Only
+//! below `2^51 + 2^13` (the first below `2^51 + 19 * 2^13`), which is what
+//! `mul`, `square`, `sub`, `neg` and `mul_small` return, and sums of two such
+//! numbers (below `2^53`) can go straight into the next operation. `mul`,
+//! `square` and the right-hand side of `sub` accept limbs up to `2^54`. Only
 //! `to_bytes` produces the one canonical representative below the prime.
 //!
 //! None of it depends on the value of a number: every function does the same
-//! operations whatever its inputs are, and there is no table.
+//! operations whatever its inputs are, and there is no table. The one
+//! exception is `sqrt_ratio`, which Ed25519 uses to decode a public key, and
+//! which branches on its result.
 
-use crate::ec::ct;
-use core::ops::{Add, Mul, Sub};
+use super::ct;
+use core::ops::{Add, Mul, Neg, Sub};
 
 const LOW_51_BITS: u64 = (1 << 51) - 1;
 
 /// A number modulo `2^255 - 19`, in five limbs of about 51 bits.
 #[derive(Clone, Copy)]
-pub(super) struct Fe([u64; 5]);
+pub(crate) struct Fe([u64; 5]);
 
 /// `a * b` as a `u128`.
 #[inline(always)]
@@ -34,33 +38,44 @@ fn m(a: u64, b: u64) -> u128 {
 }
 
 impl Fe {
-    pub(super) const ZERO: Fe = Fe([0; 5]);
-    pub(super) const ONE: Fe = Fe([1, 0, 0, 0, 0]);
+    pub(crate) const ZERO: Fe = Fe([0; 5]);
+    pub(crate) const ONE: Fe = Fe([1, 0, 0, 0, 0]);
 
     /// The number whose little-endian encoding is `bytes`. The top bit of the
     /// last byte is ignored, as RFC 7748 asks of a `u` coordinate. A value
     /// from `2^255 - 19` to `2^255 - 1` is accepted as it is, and means the
     /// same as the value minus the prime.
-    pub(super) fn from_bytes(bytes: &[u8; 32]) -> Fe {
+    ///
+    /// It is a `const fn`, so that constants such as those of edwards25519 can
+    /// be written as their encodings.
+    pub(crate) const fn from_bytes(bytes: &[u8; 32]) -> Fe {
         // The limbs start at bits 0, 51, 102, 153 and 204, which are bit 0 of
         // byte 0 and bits 3, 6, 1 and 4 of bytes 6, 12, 19 and 25. Each is read
         // from an 8-byte word at a byte at or before its start and shifted
         // down; the last one starts at byte 24 and shifts by 12, because a word
         // at byte 25 would run past the end.
-        let load = |i: usize| u64::from_le_bytes(bytes[i..i + 8].try_into().expect("8 bytes"));
+        const fn load(bytes: &[u8; 32], i: usize) -> u64 {
+            let mut word = [0u8; 8];
+            let mut j = 0;
+            while j < 8 {
+                word[j] = bytes[i + j];
+                j += 1;
+            }
+            u64::from_le_bytes(word)
+        }
         Fe([
-            load(0) & LOW_51_BITS,
-            (load(6) >> 3) & LOW_51_BITS,
-            (load(12) >> 6) & LOW_51_BITS,
-            (load(19) >> 1) & LOW_51_BITS,
+            load(bytes, 0) & LOW_51_BITS,
+            (load(bytes, 6) >> 3) & LOW_51_BITS,
+            (load(bytes, 12) >> 6) & LOW_51_BITS,
+            (load(bytes, 19) >> 1) & LOW_51_BITS,
             // This one also drops the top bit of the encoding.
-            (load(24) >> 12) & LOW_51_BITS,
+            (load(bytes, 24) >> 12) & LOW_51_BITS,
         ])
     }
 
     /// The canonical little-endian encoding: the one representative of the
     /// number that is below the prime.
-    pub(super) fn to_bytes(self) -> [u8; 32] {
+    pub(crate) fn to_bytes(self) -> [u8; 32] {
         let mut limbs = Fe::weak_reduce(self.0).0;
 
         // Every limb is below 2^51 + 2^13 (the first a little more), so the
@@ -126,35 +141,33 @@ impl Fe {
     /// weakly reduced limbs.
     ///
     /// Columns below `2^115` give carries below `2^64`, so each carry fits a
-    /// `u64`, which the casts tell the compiler (it then adds a 64-bit number
-    /// to a 128-bit one, not two of 128 bits). The product of two numbers with
-    /// limbs below `2^54` has columns of five terms of `19 * 2^108` at most.
+    /// `u64`, which the casts tell the compiler. The product of two numbers with
+    /// limbs below `2^54` has columns of five terms of `19 * 2^108` at most. The
+    /// carries out of all five columns are taken at once and added in one pass,
+    /// not one after the other, which keeps them off the chain of dependencies
+    /// that each multiplication waits on: on an Apple M1 Pro, a chain of
+    /// products is 8% faster this way than with the carries chained, and an
+    /// inversion 14%. The top column is five products of limbs, none of them
+    /// multiplied by 19, so below `5 * 2^108`; its carry is below `5 * 2^57`,
+    /// and 19 times that plus the 51 bits of the first column is below `2^64`
+    /// (it is below `2^63.6`). The other limbs are a carry below `2^64 - 2^51`
+    /// plus 51 bits, so every limb fits, and `weak_reduce` finishes.
     #[inline(always)]
-    fn carry_columns([c0, mut c1, mut c2, mut c3, mut c4]: [u128; 5]) -> Fe {
-        c1 += u128::from((c0 >> 51) as u64);
-        let l0 = (c0 as u64) & LOW_51_BITS;
-        c2 += u128::from((c1 >> 51) as u64);
-        let l1 = (c1 as u64) & LOW_51_BITS;
-        c3 += u128::from((c2 >> 51) as u64);
-        let l2 = (c2 as u64) & LOW_51_BITS;
-        c4 += u128::from((c3 >> 51) as u64);
-        let l3 = (c3 as u64) & LOW_51_BITS;
-        // The top column is five products of limbs, none of them multiplied by
-        // 19, so below 5 * 2^108, plus the carry out of the column before it
-        // (below 2^62). Its own carry is then below 5 * 2^57 + 2^14, and 19
-        // times that plus the 51 bits of `l0` is below 2^64 (it is below 2^63.6).
-        let carry = (c4 >> 51) as u64;
-        let l4 = (c4 as u64) & LOW_51_BITS;
-
-        let l0 = l0 + carry * 19;
-        // One more carry from the first limb into the second, so that no limb
-        // is above 2^51 + 2^13.
-        Fe([l0 & LOW_51_BITS, l1 + (l0 >> 51), l2, l3, l4])
+    fn carry_columns(columns: [u128; 5]) -> Fe {
+        let carry = columns.map(|c| (c >> 51) as u64);
+        let low = columns.map(|c| (c as u64) & LOW_51_BITS);
+        Fe::weak_reduce([
+            low[0] + carry[4] * 19,
+            low[1] + carry[0],
+            low[2] + carry[1],
+            low[3] + carry[2],
+            low[4] + carry[3],
+        ])
     }
 
     /// `self * k` for a small `k` (below `2^20`, or the limbs of the result
     /// outgrow the bounds above).
-    pub(super) fn mul_small(&self, k: u64) -> Fe {
+    pub(crate) fn mul_small(&self, k: u64) -> Fe {
         let l = &self.0;
         Fe::carry_columns([m(l[0], k), m(l[1], k), m(l[2], k), m(l[3], k), m(l[4], k)])
     }
@@ -162,18 +175,21 @@ impl Fe {
     /// `self * self`, with the 15 distinct products of limbs a square has in
     /// place of the 25 of a general product.
     #[inline(always)]
-    pub(super) fn square(&self) -> Fe {
+    pub(crate) fn square(&self) -> Fe {
         let [a0, a1, a2, a3, a4] = self.0;
 
         // Products that reach past the top limb wrap around with a factor of
-        // 19 (2^255 = 19), and the cross products appear twice.
+        // 19 (2^255 = 19), and the cross products appear twice, so one of their
+        // factors is doubled first: a doubled limb is below 2^55 and 19 times a
+        // limb below 2^59, and each column stays below the bound of `mul`'s.
+        let [d0, d1, d2, d3] = [a0, a1, a2, a3].map(|a| 2 * a);
         let a3_19 = 19 * a3;
         let a4_19 = 19 * a4;
-        let c0 = m(a0, a0) + 2 * (m(a1, a4_19) + m(a2, a3_19));
-        let c1 = m(a3, a3_19) + 2 * (m(a0, a1) + m(a2, a4_19));
-        let c2 = m(a1, a1) + 2 * (m(a0, a2) + m(a4, a3_19));
-        let c3 = m(a4, a4_19) + 2 * (m(a0, a3) + m(a1, a2));
-        let c4 = m(a2, a2) + 2 * (m(a0, a4) + m(a1, a3));
+        let c0 = m(a0, a0) + m(d1, a4_19) + m(d2, a3_19);
+        let c1 = m(a3, a3_19) + m(d0, a1) + m(d2, a4_19);
+        let c2 = m(a1, a1) + m(d0, a2) + m(d3, a4_19);
+        let c3 = m(a4, a4_19) + m(d0, a3) + m(d1, a2);
+        let c4 = m(a2, a2) + m(d0, a4) + m(d1, a3);
         Fe::carry_columns([c0, c1, c2, c3, c4])
     }
 
@@ -190,7 +206,7 @@ impl Fe {
     /// `self^(p - 2) = self^(2^255 - 21)`, the inverse of a non-zero number and
     /// zero for zero. The exponent is a constant, so this takes 254 squarings
     /// and 11 products by the same route for every input.
-    pub(super) fn invert(&self) -> Fe {
+    pub(crate) fn invert(&self) -> Fe {
         // The chain builds z^(2^k - 1) for growing k: 5, 10, 20, 40, 50, 100,
         // 200 and 250 ones in a row, and finishes with z^(2^255 - 32) * z^11.
         let z = *self;
@@ -208,12 +224,75 @@ impl Fe {
         z_250.square_repeatedly(5) * z11
     }
 
+    /// `self^((p - 5) / 8) = self^(2^252 - 3)`, the power with which RFC 8032
+    /// (section 5.1.3) takes a square root and an inverse at once. It is the
+    /// chain of `invert` up to `z^(2^250 - 1)`, then two squarings and a
+    /// product: 251 squarings and 11 products for every input.
+    pub(crate) fn pow_p58(&self) -> Fe {
+        let z = *self;
+        let z2 = z.square();
+        let z9 = z * z2.square_repeatedly(2);
+        let z11 = z2 * z9;
+        let z_5 = z9 * z11.square(); // z^(2^5 - 1)
+        let z_10 = z_5.square_repeatedly(5) * z_5;
+        let z_20 = z_10.square_repeatedly(10) * z_10;
+        let z_40 = z_20.square_repeatedly(20) * z_20;
+        let z_50 = z_40.square_repeatedly(10) * z_10;
+        let z_100 = z_50.square_repeatedly(50) * z_50;
+        let z_200 = z_100.square_repeatedly(100) * z_100;
+        let z_250 = z_200.square_repeatedly(50) * z_50;
+        z_250.square_repeatedly(2) * z // z^(2^252 - 4 + 1)
+    }
+
+    /// A square root of `u / v`, or `None` if `u / v` is not a square: the
+    /// computation RFC 8032 (section 5.1.3) makes to decode a point, for a `v`
+    /// that is not zero. Of the two roots it returns whichever the formula
+    /// gives, and the caller picks the sign.
+    ///
+    /// Not in constant time: which of its three cases applies decides a branch.
+    /// Ed25519 only gives it public data, the encoding of a public key.
+    pub(crate) fn sqrt_ratio(u: &Fe, v: &Fe) -> Option<Fe> {
+        // x = (u / v)^((p + 3) / 8) = u * v^3 * (u * v^7)^((p - 5) / 8).
+        let v3 = v.square() * *v;
+        let v7 = v3.square() * *v;
+        let x = *u * v3 * (*u * v7).pow_p58();
+
+        // x^2 is u / v or -u / v when u / v is a square at all, and in the
+        // second case multiplying by sqrt(-1) fixes the sign.
+        let vxx = (*v * x.square()).to_bytes();
+        if vxx == u.to_bytes() {
+            Some(x)
+        } else if vxx == (-*u).to_bytes() {
+            Some(x * SQRT_M1)
+        } else {
+            None
+        }
+    }
+
+    /// 1 if the number is "negative" in the sense of RFC 8032 (section 5.1.2),
+    /// that is if its canonical value is odd, and 0 if not.
+    pub(crate) fn is_negative(&self) -> u8 {
+        self.to_bytes()[0] & 1
+    }
+
+    /// Whether the number is zero modulo the prime, in a time that does not
+    /// depend on it.
+    pub(crate) fn is_zero(&self) -> bool {
+        ct::bytes_are_zero(&self.to_bytes())
+    }
+
     /// `a` where `mask` is all ones and `b` where it is all zeros.
     #[inline(always)]
-    pub(super) fn select(mask: u64, a: &Fe, b: &Fe) -> Fe {
+    pub(crate) fn select(mask: u64, a: &Fe, b: &Fe) -> Fe {
         Fe(core::array::from_fn(|i| ct::select(mask, a.0[i], b.0[i])))
     }
 }
+
+/// A square root of -1: `2^((p - 1) / 4)` (RFC 8032, section 5.1.1).
+const SQRT_M1: Fe = Fe::from_bytes(&[
+    0xb0, 0xa0, 0x0e, 0x4a, 0x27, 0x1b, 0xee, 0xc4, 0x78, 0xe4, 0x2f, 0xad, 0x06, 0x18, 0x43, 0x2f,
+    0xa7, 0xd7, 0xfb, 0x3d, 0x99, 0x00, 0x4d, 0x2b, 0x0b, 0xdf, 0xc1, 0x4f, 0x80, 0x24, 0x83, 0x2b,
+]);
 
 impl Add for Fe {
     type Output = Fe;
@@ -242,6 +321,16 @@ impl Sub for Fe {
             (self.0[3] + 36028797018963952) - rhs.0[3],
             (self.0[4] + 36028797018963952) - rhs.0[4],
         ])
+    }
+}
+
+impl Neg for Fe {
+    type Output = Fe;
+
+    /// `-self`, as `0 - self`: weakly reduced, for limbs up to `2^54`.
+    #[inline(always)]
+    fn neg(self) -> Fe {
+        Fe::ZERO - self
     }
 }
 
@@ -446,5 +535,92 @@ mod tests {
         let (a, b) = (Fe([1, 2, 3, 4, 5]), Fe([6, 7, 8, 9, 10]));
         assert_eq!(Fe::select(u64::MAX, &a, &b).0, a.0);
         assert_eq!(Fe::select(0, &a, &b).0, b.0);
+    }
+
+    /// `x^e` in the reference field, by square-and-multiply over the bits of
+    /// `e` (four little-endian words), from the top.
+    fn reference_pow(x: &Reference, e: [u64; 4]) -> Reference {
+        let mut acc = Reference::ONE;
+        for bit in (0..256).rev() {
+            acc = acc.square();
+            if (e[bit / 64] >> (bit % 64)) & 1 == 1 {
+                acc = acc * *x;
+            }
+        }
+        acc
+    }
+
+    #[test]
+    fn negation_and_pow_p58_match_the_generic_field() {
+        // (p - 5) / 8 = 2^252 - 3.
+        let exponent = [
+            0xffff_ffff_ffff_fffd,
+            u64::MAX,
+            u64::MAX,
+            0x0fff_ffff_ffff_ffff,
+        ];
+        for bytes in samples() {
+            let (x, rx) = (Fe::from_bytes(&bytes), generic_from_bytes(&bytes));
+            assert_same(&-x, &rx.neg(), "neg");
+            assert_same(&x.pow_p58(), &reference_pow(&rx, exponent), "pow_p58");
+        }
+    }
+
+    #[test]
+    fn sqrt_ratio_finds_the_roots_there_are() {
+        // 2 is not a square modulo p, as p is 5 modulo 8, so for u = w^2 v the
+        // ratio is a square and for u = 2 w^2 v it is not. The roots of w^2
+        // are w and -w.
+        let mut two = [0u8; 32];
+        two[0] = 2;
+        let two = Fe::from_bytes(&two);
+        let samples = samples();
+        for (w_bytes, v_bytes) in samples.iter().zip(samples.iter().skip(1)) {
+            let (w, v) = (Fe::from_bytes(w_bytes), Fe::from_bytes(v_bytes));
+            if v.is_zero() {
+                continue;
+            }
+            let ww = w.square();
+            let root = Fe::sqrt_ratio(&(ww * v), &v).expect("a square");
+            assert_eq!(
+                root.square().to_bytes(),
+                ww.to_bytes(),
+                "w = {w_bytes:02x?}"
+            );
+            if !w.is_zero() {
+                assert!(
+                    Fe::sqrt_ratio(&(two * ww * v), &v).is_none(),
+                    "w = {w_bytes:02x?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn sign_and_zero_follow_the_canonical_value() {
+        let le = |value: &[u8]| {
+            let mut bytes = [0u8; 32];
+            bytes[..value.len()].copy_from_slice(value);
+            Fe::from_bytes(&bytes)
+        };
+        let mut p = [0xff; 32];
+        p[0] = 0xed;
+        p[31] = 0x7f;
+        let mut p_plus_1 = p;
+        p_plus_1[0] = 0xee;
+        let mut p_minus_1 = p;
+        p_minus_1[0] = 0xec;
+
+        // p - 1 is even, and p + 1 is the number 1 written above the prime.
+        assert_eq!(le(&[1]).is_negative(), 1);
+        assert_eq!(le(&[2]).is_negative(), 0);
+        assert_eq!(Fe::from_bytes(&p_minus_1).is_negative(), 0);
+        assert_eq!(Fe::from_bytes(&p_plus_1).is_negative(), 1);
+        assert_eq!((-le(&[1])).is_negative(), 0);
+
+        assert!(Fe::ZERO.is_zero());
+        assert!(Fe::from_bytes(&p).is_zero());
+        assert!(!le(&[1]).is_zero());
+        assert!(!Fe::from_bytes(&p_plus_1).is_zero());
     }
 }

@@ -13,8 +13,8 @@
 //! which is decided by swapping them under a mask, not by a branch.
 
 use super::curve::{Curve, Error, sealed::Sealed};
-use super::fe25519::Fe;
 use crate::ec::ct;
+use crate::ec::fe25519::Fe;
 use crate::wipe::wipe;
 
 /// The curve Curve25519 with the function X25519 of RFC 7748: private keys,

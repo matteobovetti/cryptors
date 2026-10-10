@@ -817,9 +817,9 @@ microseconds per operation, lower is better):
 | P-521 new private key | **261.6** | 269.8 | 269.8 |
 | P-521 ecdh | 1012.6 | **945.1** | 945.2 |
 | P-521 handshake | 1275.0 | **1216.2** | 1215.8 |
-| X25519 new private key | **30.5** | 35.5 | 35.6 |
-| X25519 ecdh | **30.6** | 35.5 | 35.5 |
-| X25519 handshake | **61.1** | 71.1 | 71.1 |
+| X25519 new private key | **28.2** | 36.3 | 36.4 |
+| X25519 ecdh | **28.1** | 36.3 | 36.3 |
+| X25519 handshake | **56.5** | 72.6 | 72.6 |
 
 Building a public key takes 0.1 to 0.5 µs for the NIST curves here and 0.2 to 0.9 µs in Go, and nothing for X25519, which
 has nothing to check. Run-to-run spread was within about 1% in every cell, but the machine was not idle (load average
@@ -827,10 +827,13 @@ has nothing to check. Run-to-run spread was within about 1% in every cell, but t
 
 Per curve:
 
-- **X25519 is 16% faster than Go's.** Go's X25519 has assembly for amd64 only, so on this machine the two are portable
+- **X25519 is 29% faster than Go's.** Go's X25519 has assembly for amd64 only, so on this machine the two are portable
   code against portable code, and both use five limbs of 51 bits. The first version of ours used the field of the
   NIST curves, which does not know about the shape of `2^255 - 19`, and took 79.6 µs for an exchange, about 2.2x Go's at the time; the
-  field of its own took that to 30.6.
+  field of its own took that to 30.6. That field is now shared with Ed25519 (`src/ec/fe25519.rs`), and takes the carries
+  of a product from its five columns at once rather than one after the other, which took it to 28.1: the three X25519
+  rows were measured again for that, before and after, each time with Go beside it (medians of five interleaved runs,
+  load average 3 to 7.5), and went from 31.4, 31.5 and 62.8 µs to the figures above while Go's stayed within 2%.
 - **P-256: level with Go's portable code on the exchange, 21% behind on building a key, and 2.7x behind its assembly.**
   Go has assembly for P-256 on arm64 (and on amd64, ppc64le and s390x). Nothing in this crate competes with that, and the
   `purego` column is the fair one: 113.3 against 110.4 µs for the exchange, 31.8 against 26.2 for building a key.
