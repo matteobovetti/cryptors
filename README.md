@@ -759,7 +759,7 @@ Six things to know when using it:
 - **The shared secret is not a key.** It is one coordinate of a point, and both sides, and anyone who gets it from either
   of them, see exactly the same bytes. Run it through a key derivation function, and include both public keys in what
   that hashes, as RFC 7748 (section 6.1) describes and its section 7 explains the need for, before using any of it as a
-  key. HKDF is on the list above and not yet here.
+  key. [HKDF](#hkdf), `cryptors::hkdf`, is one.
 - **Nothing is authenticated.** ECDH gives two parties a secret in common; it does not say who they are. Someone between
   them can play each against the other and end up with a secret shared with both, so a protocol has to bind the keys to
   an identity (signatures, certificates, a pre-shared secret). Use a fresh key pair for each exchange where you can: a key
