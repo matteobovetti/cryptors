@@ -1,7 +1,8 @@
 //! The [`BlockCipher`] trait: the interface shared by every block cipher in
 //! this crate.
 
-/// A block cipher: a keyed permutation of fixed-size blocks, such as AES.
+/// A block cipher: a keyed permutation of fixed-size blocks, such as AES or
+/// DES.
 ///
 /// This is to ciphers what [`Digest`](crate::Digest) is to hashes, with one
 /// difference. A hash is a zero-sized marker and its functions carry no state;
@@ -27,10 +28,12 @@
 /// assert_eq!(cipher.decrypt_block(&ciphertext), [0; 16]);
 /// ```
 ///
-/// And, in generic code, treat the cipher as a parameter:
+/// And, in generic code, treat the cipher as a parameter. The block and the key
+/// are types of the cipher, so ciphers whose blocks and keys differ in size, as
+/// AES (16-byte blocks) and DES (8-byte blocks) do, fit the same code:
 ///
 /// ```
-/// use cryptors::{BlockCipher, aes::{Aes128, Aes256}};
+/// use cryptors::{BlockCipher, aes::{Aes128, Aes256}, des::Des};
 ///
 /// /// Encrypts the all-zero block under `key`, whichever cipher `C` is.
 /// fn encrypt_zeros<C: BlockCipher>(key: &C::Key) -> C::Block {
@@ -39,6 +42,7 @@
 ///
 /// assert_eq!(encrypt_zeros::<Aes128>(&[0; 16]).as_ref().len(), Aes128::BLOCK_LEN);
 /// assert_eq!(encrypt_zeros::<Aes256>(&[0; 32]).as_ref().len(), Aes256::BLOCK_LEN);
+/// assert_eq!(encrypt_zeros::<Des>(&[0; 8]).as_ref().len(), Des::BLOCK_LEN);
 /// ```
 ///
 /// [`new`]: BlockCipher::new
@@ -72,6 +76,7 @@ pub trait BlockCipher: Sized {
 mod tests {
     use super::*;
     use crate::aes::{Aes128, Aes192, Aes256};
+    use crate::des::{Des, TripleDes};
 
     /// Checks, for any cipher, that the constants agree with the key and block
     /// types and that decryption undoes encryption. The ciphertexts themselves
@@ -96,5 +101,7 @@ mod tests {
         check::<Aes128>(&[1; 16]);
         check::<Aes192>(&[2; 24]);
         check::<Aes256>(&[3; 32]);
+        check::<Des>(&[4; 8]);
+        check::<TripleDes>(&[5; 24]);
     }
 }
