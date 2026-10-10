@@ -48,8 +48,8 @@ bench-throughput:
 # `GODEBUG=cpu.sha=off` makes Go's SHA-256 skip SHA-NI and run its AVX2 path,
 # the counterpart of our AVX2 backend; other architectures have no such path,
 # so the run is skipped there. Go's DES is portable code on every platform, so
-# it has no `purego` run. HMAC has none either: it runs on the hashes, whose
-# own runs above already time Go's portable code.
+# it has no `purego` run. HMAC and HKDF have none either: they run on the
+# hashes, whose own runs already time Go's portable code.
 bench-go:
 	cd bench/aescmp && go test -v
 	cd bench/aescmp && go test -tags purego -v
@@ -59,9 +59,7 @@ bench-go:
 	cd bench/ecdsacmp && go test -v
 	cd bench/ecdsacmp && go test -tags purego -v
 <<<<<<< HEAD
-	cd bench/ed25519cmp && go test -v
-	cd bench/ed25519cmp && go test -tags purego -v
-=======
+	cd bench/hkdfcmp && go test -v
 	cd bench/hmaccmp && go test -v
 >>>>>>> 90af113 (hmac implementation)
 	cd bench/sha1cmp && go test -v
