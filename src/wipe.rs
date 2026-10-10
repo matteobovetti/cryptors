@@ -32,6 +32,34 @@ pub(crate) fn wipe_bytes(bytes: &mut [u8]) {
     wipe(tail);
 }
 
+/// The bytes of `value` where it lies in memory, read once before it is
+/// dropped there and once after: what its `Drop` leaves behind. For the tests
+/// that check a type wipes itself.
+///
+/// # Safety
+///
+/// `T` must have no padding, so that every byte read has been written.
+#[cfg(test)]
+pub(crate) unsafe fn bytes_around_drop<T>(value: T) -> (Vec<u8>, Vec<u8>) {
+    let mut slot = core::mem::MaybeUninit::new(value);
+    // One raw pointer does the dropping and the reading, so that the drop does
+    // not invalidate the pointer the reads go through.
+    let ptr = slot.as_mut_ptr();
+    let bytes = ptr.cast::<u8>();
+    let read = || -> Vec<u8> {
+        (0..size_of::<T>())
+            // SAFETY: the slot is alive, and by the caller's promise every byte
+            // of it was written, first by `T`'s constructor and then, if the
+            // drop works, by `wipe`.
+            .map(|i| unsafe { bytes.add(i).read() })
+            .collect()
+    };
+    let before = read();
+    // SAFETY: the slot holds an initialised value, dropped only here.
+    unsafe { ptr.drop_in_place() };
+    (before, read())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
