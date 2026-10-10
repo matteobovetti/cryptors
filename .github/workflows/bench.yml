@@ -32,11 +32,15 @@ jobs:
         # P-256 on both, so their `purego` runs are the like-for-like ones
         # there; the other curves are portable code in Go too. On x86-64 our
         # field arithmetic compiles to `mulq` and does not use BMI2 or ADX even
-        # where the runner has them (`lscpu` says). HMAC has no backend of its
-        # own: it runs on whatever SHA-1 and SHA-2 select on the runner (on
-        # x86-64, SHA-NI for SHA-1 and SHA-256 where the CPU has it, and the
-        # scalar backend for MD5 and the 64-bit SHA-2 functions), and Go's
-        # crypto/hmac on Go's hashes, so its figures follow the hashes'.
+        # where the runner has them (`lscpu` says).
+        # Ed25519 has no hardware path on either; on x86-64 Go's field
+        # multiplication is assembly and ours is not, so its `purego` run is
+        # the like-for-like one there.
+        # HMAC has no backend of its own: it runs on whatever SHA-1 and SHA-2
+        # select on the runner (on x86-64, SHA-NI for SHA-1 and SHA-256 where
+        # the CPU has it, and the scalar backend for MD5 and the 64-bit SHA-2
+        # functions), and Go's crypto/hmac on Go's hashes, so its figures
+        # follow the hashes'.
         # HKDF has no backend of its own either: it times HMAC-SHA256 and
         # HMAC-SHA512, so it runs on whichever SHA-2 backends the runner has,
         # on both sides.

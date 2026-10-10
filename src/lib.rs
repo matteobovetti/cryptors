@@ -5,6 +5,7 @@ mod digest;
 mod ec;
 pub mod ecdh;
 pub mod ecdsa;
+pub mod ed25519;
 pub mod hkdf;
 pub mod hmac;
 mod incremental;

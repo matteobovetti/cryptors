@@ -51,6 +51,8 @@ src/
                   field of Curve25519 (X25519, Ed25519); private, but ECDH and ECDSA re-export its curve types
   ecdh/           key agreement over P-256, P-384, P-521 and X25519: keys generic over the curve
   ecdsa/          signatures over P-224, P-256, P-384 and P-521: keys and signatures generic over the curve
+  ed25519/        signatures over edwards25519 (Ed25519, Ed25519ctx, Ed25519ph): one curve, so nothing generic
+    testdata/       Go's `sign.input` vectors, decompressed but otherwise as Go ships them
   hkdf/           key derivation over any hash that implements `Digest`: one type generic over the hash, no backend
   hmac/           message authentication over any `Digest`: no backends of its own, it runs on the hash's
   md5/
@@ -120,7 +122,6 @@ And those of `src/ecdsa/`:
 | `nist.rs` | The implementation of the private half of `Curve` for the four curves. |
 | `vectors.rs` | Test data only: RFC 6979, c2sp's key generation vectors, a selection of CAVP and of Wycheproof, the signatures of another implementation, and the chains. |
 
-<<<<<<< HEAD
 Ed25519, `src/ed25519/`, is a signature scheme with neither shape either, and with no trait at all: it has one
 curve, and its hash is part of the algorithm, so its keys are plain types. Of `src/ec/` it uses the field it shares
 with X25519, `fe25519.rs`, and `ct.rs`; the rest is for curves in Weierstrass form. Its files, from the API down:
@@ -132,6 +133,7 @@ with X25519, `fe25519.rs`, and `ct.rs`; the rest is for curves in Weierstrass fo
 | `edwards.rs` | The points of the curve and its constants: their encoding, the group law, the constant-time multiplication of the base point and the variable-time double multiplication of verification, with the two tables of multiples of the base point that every key shares. |
 | `scalar.rs` | The arithmetic modulo the order of the group, in four 64-bit words with Barrett reduction, and the two recodings of a scalar into digits. |
 | `testdata/sign.input` | Test data only: Go's 128 vectors, read with `include_str!`. |
+
 A message authentication code, `src/hmac/`, has neither shape either. It has no backend to select, because it runs on
 the hash's compression function, through the hash's own dispatcher, and it implements no trait: `Hmac<D>` is generic
 over `Digest`. Its files:
@@ -148,7 +150,6 @@ Each hash's `digest.rs` implements the trait in a few lines, on the compression 
 already has, so a message in pieces goes through the same backend as a whole one. Code that only knows `D: Digest`
 reaches it through `Digest::INCREMENTAL`, a hidden constant that the crate's hashes set and that is `None` for a hash
 implemented elsewhere; the interface is not public, so it can change without breaking anyone.
->>>>>>> 3ffd809 (hmac documentation)
 
 A key derivation function, `src/hkdf/`, has less in it. There is no backend, because the work is in the hash, which picks
 its own, and no trait, because `Hkdf<D>` is generic over `Digest`. Its files:
@@ -171,9 +172,11 @@ extendable-output functions do not fit the trait. The block ciphers (AES, DES) i
 `BlockCipher` instead, and are not unit types: a cipher holds the key schedule it
 was built with. ECDH and ECDSA implement neither: their curves are unit types, but they only
 name the curve that a `PrivateKey<C>`, a `PublicKey<C>` or a `Signature<C>` belongs to. ECDSA takes the hash as
-a type parameter, `D: Digest`, of the functions that sign and verify a message. HMAC is generic over `Digest` rather
-than implementing it: an `Hmac<D>` holds the two hash states it computed from its key. HKDF takes the hash as a type
-parameter of its one type, `Hkdf<D: Digest>`, which holds the pseudorandom key it was built with.
+a type parameter, `D: Digest`, of the functions that sign and verify a message. Ed25519 implements neither trait
+and has no type parameter: a `SigningKey`, a `VerifyingKey` and a `Signature`, with a method for each of its three
+schemes. HMAC is generic over `Digest` rather than implementing it: an `Hmac<D>` holds the two hash states it computed
+from its key. HKDF takes the hash as a type parameter of its one type, `Hkdf<D: Digest>`, which holds the pseudorandom
+key it was built with.
 
 Each algorithm in `bench/` is its own Go module with a throughput test that
 mirrors the Rust one (same buffer, warm-up and best-of-5 method). The AES, ECDH, ECDSA, Ed25519, SHA-2
@@ -185,10 +188,8 @@ one also checks its inputs, with the NIST and RFC 7748 vectors and with the
 chained exchanges of `src/ecdh/keypair.rs`, so a broken build fails instead of
 passing as a figure, and the ECDSA one does the same with the signatures of
 RFC 6979, the chained signatures of `src/ecdsa/keypair.rs` and the randomized
-<<<<<<< HEAD
 signatures of `src/ecdsa/vectors.rs`, which Go made, and the Ed25519 one with RFC 8032's first example and the 768
-signatures of `src/ed25519/signature.rs`. `make bench-go` runs them all, and so does the manual `Benchmarks`
-signatures of `src/ecdsa/vectors.rs`, which Go made. (`hmaccmp` does not split either: it measures the hashes, whose
+signatures of `src/ed25519/signature.rs`. (`hmaccmp` does not split either: it measures the hashes, whose
 own modules time Go's portable code; it checks a known answer for each hash before it times anything.) The HKDF one checks
 RFC 5869 A.1 and the longest outputs that `longest_output` in `src/hkdf/kdf.rs` expects. `make bench-go` runs them all, and so does the manual `Benchmarks`
 workflow (`.github/workflows/bench.yml`) on GitHub's x86-64 and Arm runners.
@@ -287,8 +288,6 @@ reaches, and the panic for a generator that never gives a number), `hmac_drbg::t
 (every way to write a signature that is not the one DER prescribes, and the length at which the long form starts),
 `curve::tests::errors_say_what_went_wrong` and `throughput`.
 
-<<<<<<< HEAD
-<<<<<<< HEAD
 Ed25519's tests are `known_answers` (every example of RFC 8032 for the three schemes), `go_sign_input` (Go's vectors,
 from `testdata/`), `many_keys` (768 signatures under 256 keys, with values from Go that OpenSSL agrees with and that
 `bench/ed25519cmp` recomputes), one test for each rule of verification (`rejects_tampering`,
@@ -301,9 +300,7 @@ bounds allow (ECDH's tests, and `negation_and_pow_p58_match_the_generic_field`,
 `sqrt_ratio_finds_the_roots_there_are` and `sign_and_zero_follow_the_canonical_value` for what only Ed25519 uses);
 `scalar.rs` against a reduction one bit at a time; and the double multiplication of `edwards.rs` against plain
 double-and-add. `cargo test -- ed25519 ec::fe25519` runs all of them.
-=======
-=======
->>>>>>> hkdf
+
 HMAC's tests are `rfc4231` and `rfc2202` (the RFCs' vectors, through every way of computing a tag and through the
 one-shot path as well), `generated_vectors` (from OpenSSL and Go, for every hash, at the key-length boundaries and on
 both sides of the inner hash's padding boundary), `truncated_tags`, `verify_accepts_only_the_tag`,
@@ -312,10 +309,6 @@ both sides of the inner hash's padding boundary), `truncated_tags`, `verify_acce
 `long_message_in_uneven_pieces`, `a_clone_carries_on_from_the_same_point`) and checks `dropping_wipes_the_state`;
 `wipe::tests::wipe_bytes_zeroes_every_byte` checks the bulk wipe both use. `cargo test -- hmac:: incremental::` runs
 them all.
-<<<<<<< HEAD
->>>>>>> 3ffd809 (hmac documentation)
-=======
->>>>>>> hkdf
 
 HKDF's tests are `rfc_5869` (the seven cases of Appendix A, through every function of the API), `salt_lengths` and
 `prk_lengths` (salts and PRKs of HashLen, one block and one byte more, where HMAC starts hashing its key), `longest_output`

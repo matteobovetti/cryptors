@@ -25,7 +25,7 @@ This library supports the following algorithms and packages:
 | DES | [FIPS 46-3](https://csrc.nist.gov/pubs/fips/46-3/final): Data Encryption Standard and Triple DES (TDEA), withdrawn in 2005 and kept for legacy data | Implemented |
 | ECDH | [NIST SP 800-56A Rev. 3](https://csrc.nist.gov/pubs/sp/800/56/a/r3/final) and [RFC 7748](https://www.rfc-editor.org/info/rfc7748): Elliptic Curve Diffie-Hellman over P-256, P-384, P-521 and Curve25519 (X25519) | Implemented |
 | ECDSA | [FIPS 186-5](https://csrc.nist.gov/pubs/fips/186-5/final) and [RFC 6979](https://www.rfc-editor.org/info/rfc6979): Elliptic Curve Digital Signature Algorithm over P-224, P-256, P-384 and P-521, randomized and deterministic | Implemented |
-| Ed25519 | Ed25519 signature algorithm | Planned |
+| Ed25519 | [RFC 8032](https://www.rfc-editor.org/info/rfc8032): Edwards-curve Digital Signature Algorithm over edwards25519 (Ed25519, Ed25519ctx and Ed25519ph) | Implemented |
 | HKDF | [RFC 5869](https://www.rfc-editor.org/info/rfc5869): HMAC-based Extract-and-Expand Key Derivation Function, over any hash of the crate that implements `Digest` | Implemented |
 | HMAC | [FIPS 198-1](https://csrc.nist.gov/pubs/fips/198-1/final) and [RFC 2104](https://www.rfc-editor.org/info/rfc2104): Keyed-Hash Message Authentication Code, over MD5, SHA-1 and the six SHA-2 functions | Implemented |
 | HPKE | RFC 9180: Hybrid Public Key Encryption | Planned |
@@ -203,12 +203,13 @@ available.
 There are two other uses. One is an empty block of inline assembly in SHA-256's two aarch64 backends, scalar and
 FEAT_SHA256. It emits no instruction, touches no memory, and only stops the compiler from rearranging equivalent
 arithmetic into a slower order (`src/sha2/sha256/scalar.rs` and `src/sha2/sha256/aarch64.rs`). The other is the
-volatile write that overwrites an AES or DES cipher's round keys, an ECDH or ECDSA private key or ECDH shared secret, or
-the hash states of an HMAC key, with zeros when it is dropped, which the compiler would otherwise delete as a store
-nobody reads (`src/aes/schedule.rs`, `src/des/schedule.rs` and, for ECDH, ECDSA and HMAC, `src/wipe.rs`). For the
-states of HMAC, which are a few hundred bytes and wiped twice for every tag, `src/wipe.rs` views the bytes as 16-byte
-words where they are aligned for it (`align_to_mut`), so that a wipe is one store per 16 bytes instead of one per byte.
-Outside its tests, none of ECDH, ECDSA and HMAC has intrinsics or anything else that is `unsafe`.
+volatile write that overwrites an AES or DES cipher's round keys, an ECDH or ECDSA private key or ECDH shared secret,
+an Ed25519 signing key or the hash states of an HMAC key, with zeros when it is dropped, which the compiler would
+otherwise delete as a store nobody reads (`src/aes/schedule.rs`, `src/des/schedule.rs` and, for ECDH, ECDSA, Ed25519
+and HMAC, `src/wipe.rs`). For the states of HMAC, which are a few hundred bytes and wiped twice for every tag,
+`src/wipe.rs` views the bytes as 16-byte words where they are aligned for it (`align_to_mut`), so that a wipe is one
+store per 16 bytes instead of one per byte. Outside their tests, none of ECDH, ECDSA, Ed25519 and HMAC has intrinsics
+or anything else that is `unsafe`.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -235,6 +236,10 @@ cryptors
 │   │   Signature
 │   ├── P224, P256, P384, P521       the curves, which implement the sealed trait `Curve` (ecdh has three of these types)
 │   └── Error
+├── ed25519                          signatures on one curve with its hash built in, so nothing is generic
+│   ├── SigningKey, VerifyingKey,    a method for each of the three schemes: Ed25519, Ed25519ctx, Ed25519ph
+│   │   Signature
+│   └── Error, MAX_CONTEXT_LEN
 ├── hkdf                             key derivation: generic over the hash, as in Hkdf<Sha256>
 │   ├── Hkdf                         a pseudorandom key, extracted or given, ready to expand into keys
 │   └── Error
@@ -308,6 +313,10 @@ Signatures are not either. ECDSA signs a digest, but it needs the hash for more 
 caller's, and the generator of the per-message secret number is built on it), so the hash is a type parameter:
 `key.sign::<Sha256, _>(&mut rng, message)` takes any `D: Digest`, and `public.verify::<Sha256>(message, &signature)` has
 to name the same one. The keys and the `Signature<C>` are generic over the curve, as in ECDH. See [ECDSA](#ecdsa).
+
+Ed25519 is a signature scheme too, but its curve and its hash are fixed by the standard, so nothing in it is generic: a
+`SigningKey` signs and a `VerifyingKey` verifies, with one method for each of the three schemes of RFC 8032 (`sign`,
+`sign_ctx`, `sign_prehashed` and their `verify` counterparts), and a `Signature` is 64 bytes. See [Ed25519](#ed25519).
 
 Message authentication is built on a hash without being one. `Hmac<D>` takes any `D: Digest` and, like a cipher, is
 built from a key with `new`, which hashes the padded key once; `mac` then gives the tag of a message, and `verify`
@@ -749,7 +758,7 @@ Six things to know when using it:
 - **The shared secret is not a key.** It is one coordinate of a point, and both sides, and anyone who gets it from either
   of them, see exactly the same bytes. Run it through a key derivation function, and include both public keys in what
   that hashes, as RFC 7748 (section 6.1) describes and its section 7 explains the need for, before using any of it as a
-  key. HKDF is on the list above and not yet here.
+  key. [HKDF](#hkdf), `cryptors::hkdf`, is one.
 - **Nothing is authenticated.** ECDH gives two parties a secret in common; it does not say who they are. Someone between
   them can play each against the other and end up with a secret shared with both, so a protocol has to bind the keys to
   an identity (signatures, certificates, a pre-shared secret). Use a fresh key pair for each exchange where you can: a key
@@ -1127,6 +1136,287 @@ No x86 figures are given yet, for the same reason as the others: nothing here ca
 translates the instructions, so its timings say nothing about an x86 CPU. The manual `Benchmarks` workflow
 (`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
 
+## Ed25519
+
+Ed25519 lets the holder of a private key sign a message so that anyone with the matching public key can check that the
+signature is of that message and was made by that holder, and nobody without the private key can make one. It is EdDSA,
+the Edwards-curve Digital Signature Algorithm of Bernstein, Duif, Lange, Schwabe and Yang (2011), on edwards25519, the
+twisted Edwards form of the curve of X25519, with SHA-512 as its hash. It is one of the signature algorithms of SSH
+(RFC 8709), TLS 1.3 (RFC 8446), X.509 (RFC 8410) and DNSSEC (RFC 8080), and the kind of key OpenSSH's `ssh-keygen` makes
+by default. It is neither a hash nor a cipher, so it implements neither `Digest` nor `BlockCipher`, and unlike ECDH and
+ECDSA nothing in it is generic: there is one curve, and the hash is part of the algorithm. The keys are `SigningKey` and
+`VerifyingKey`, and a `Signature` is 64 bytes.
+
+| Scheme | Signs | Context | Seed | Public key | Signature | Methods |
+|--------|-------|---------|------|------------|-----------|---------|
+| [Ed25519](https://www.rfc-editor.org/rfc/rfc8032#section-5.1) | the message | none | 32 bytes | 32 bytes | 64 bytes | `sign`, `verify` |
+| [Ed25519ctx](https://www.rfc-editor.org/rfc/rfc8032#section-5.1) | the message | 1 to 255 bytes | 32 bytes | 32 bytes | 64 bytes | `sign_ctx`, `verify_ctx` |
+| [Ed25519ph](https://www.rfc-editor.org/rfc/rfc8032#section-5.1) | the SHA-512 digest of the message | 0 to 255 bytes | 32 bytes | 32 bytes | 64 bytes | `sign_prehashed`, `verify_prehashed` |
+
+All three are defined in [RFC 8032](https://www.rfc-editor.org/info/rfc8032) (section 5.1), and they share their keys:
+a signature made under one does not verify under another, because every hash input starts with a prefix that names the
+scheme (`dom2`, section 2). A context is a string that a protocol fixes to say what its signatures are for, so that one
+made for a purpose cannot be passed off as one made for another. Plain Ed25519 is the one to use, and the one other
+software means by the name. The RFC says Ed25519ph SHOULD NOT be used (section 8.5): it is there for APIs that hash a
+message before signing it, and it is only as strong as SHA-512's collision resistance, which Ed25519 does not rely on.
+Ed448, the other curve of RFC 8032, is not here.
+
+The private key is a 32-byte seed (RFC 8032 calls it the private key, and Go's `crypto/ed25519` the seed); the two halves
+of its SHA-512 digest are the secret scalar and the prefix that the per-message secrets are made from. A public key is a
+point in 32 bytes, its y-coordinate in little-endian order with the low bit of x in the top bit (section 5.1.2), and a
+signature is the encoding of a point R followed by a number S. A key from the network is validated when it is turned into
+a `VerifyingKey`: it must be what the RFC's decoding accepts (y below the prime, a point of the curve, no sign bit when
+x = 0) and, beyond the RFC, not one of the eight points of small order, under which signatures can be forged. Verifying
+refuses an S that is not below the order of the group, compares R byte for byte with the encoding of the point that the
+equation gives, and checks the cofactorless equation. `SigningKey::to_keypair_bytes` and `from_keypair_bytes` write and
+read Go's 64-byte `ed25519.PrivateKey` (the seed, then the public key), and reading checks that the two halves belong
+together.
+
+Signing is deterministic: the per-message secret is a hash of the prefix and the message, so a signature needs no
+randomness, and the same message always gets the same signature. Only a new key needs random bytes, and the standard
+library has no secure random source that is stable while the `Rand` item above is still planned, so
+`SigningKey::generate` takes any `std::io::Read`, as ECDH and ECDSA do.
+
+### Usage
+
+```rust
+use cryptors::{Digest, ed25519::{Error, Signature, SigningKey, VerifyingKey}, sha2::Sha512};
+
+fn unhex(s: &str) -> Vec<u8> {
+    (0..s.len() / 2).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap()).collect()
+}
+
+// RFC 8032, section 7.1, test 1: a seed, its public key, and the signature of the empty message.
+let seed: [u8; 32] = unhex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60").try_into().unwrap();
+let key = SigningKey::from_seed(&seed);
+assert_eq!(
+    key.verifying_key().as_bytes()[..],
+    unhex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
+);
+let signature = key.sign(b"");
+assert_eq!(
+    signature.to_bytes()[..],
+    unhex(concat!(
+        "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155",
+        "5fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b"
+    ))
+);
+
+// The verifier has the public key and the signature as bytes (this is where a bad key is refused)...
+let public = VerifyingKey::try_from(&key.verifying_key().to_bytes()[..]).unwrap();
+let received = Signature::try_from(&signature.to_bytes()[..]).unwrap();
+
+// ...and checks the signature against the message.
+assert_eq!(public.verify(b"", &received), Ok(()));
+assert_eq!(public.verify(b"x", &received), Err(Error::InvalidSignature));
+
+// The same key signs under the other two schemes, and none of the three accepts another's signatures.
+let with_context = key.sign_ctx(b"message", b"my protocol, v1").unwrap();
+assert_eq!(public.verify_ctx(b"message", b"my protocol, v1", &with_context), Ok(()));
+assert_eq!(public.verify(b"message", &with_context), Err(Error::InvalidSignature));
+let digest = Sha512::digest(b"message");
+let prehashed = key.sign_prehashed(&digest, b"").unwrap();
+assert_eq!(public.verify_prehashed(&digest, b"", &prehashed), Ok(()));
+
+// The identity, (0, 1), is a point of the curve, but of small order, and is refused as a key.
+let mut identity = [0u8; 32];
+identity[0] = 1;
+assert_eq!(VerifyingKey::from_bytes(&identity), Err(Error::InvalidPublicKey));
+```
+
+Real keys come from `SigningKey::generate`, given a source of secure random bytes of your own:
+
+```rust
+use cryptors::ed25519::SigningKey;
+use std::fs::File;
+
+let mut rng = File::open("/dev/urandom")?;                 // on Unix; any io::Read of random bytes will do
+let key = SigningKey::generate(&mut rng)?;
+let signature = key.sign(b"a message");
+// Send key.verifying_key().to_bytes(), the message and signature.to_bytes() to the other side.
+```
+
+`examples/ed25519.rs` checks the first example of RFC 8032, then generates a key and runs each of the three schemes on
+it, with a changed message, a changed signature and a wrong context: `cargo run --release --example ed25519`.
+
+### Security
+
+Ed25519 is not broken. The best known attacks take about the square root of the size of the group, which has 2^252 and
+some elements, for the 128 bits of security that RFC 8032 (section 8.5) gives it, like P-256 and AES-128. A large quantum
+computer would break it, by Shor's algorithm, and a signature that has to stay trustworthy after one exists needs a
+post-quantum scheme such as ML-DSA, which is also on the list above, alongside or instead.
+
+Six things to know when using it:
+
+- **The randomness is the caller's, and there is less of it to get wrong than in ECDSA.** `generate` is only as good as
+  the reader it is given, and a predictable one makes every key it produced guessable. After that nothing is random: the
+  per-message secret comes from a hash of the key and the message (RFC 8032, section 8.2), so the failure that costs
+  ECDSA its keys, a secret reused or partly predictable from one signature to the next, cannot happen here. What a
+  deterministic signature gives up is protection against faults: someone who can make one computation of a signature go
+  wrong and see the result beside a correct one can work out the key (Romailler and Pelissier, 2017). Nothing here
+  protects against that.
+- **Which signatures verify is spelled out, because implementations differ.** S must be below the order ℓ, which stops
+  anyone from turning one valid signature into another by adding ℓ (RFC 8032, section 8.4); R is compared byte for byte
+  with the encoding of `[S]B - [k]A`, so a non-canonical R never matches; and the equation is the cofactorless
+  `[S]B = R + [k]A`, which the RFC allows in place of `[8][S]B = [8]R + [8][k]A`. The two differ only on signatures that no
+  honest signer makes. All three are what Go's `crypto/ed25519` does. The public key is where this crate is stricter:
+  `VerifyingKey::from_bytes` takes only the canonical encoding of a point that is not of small order. Go also accepts
+  encodings with y of p or more, or with the sign bit set when x = 0, which the RFC's decoding rejects, and the eight
+  points of small order, under which a signature can be made without the private key (under the identity, `R = [S]B`
+  verifies for every message, and Go accepts it). So every signature this crate accepts, Go accepts too, and the reverse
+  fails only for those keys, which no key generation produces.
+- **A signature is unique.** With those rules, nobody can turn a valid signature into a second one of the same message
+  under the same key, which ECDSA cannot say. A program that identifies a signature by its bytes can rely on that.
+- **Contexts and prehashing are for the protocols that ask for them.** A context should be a constant of the protocol,
+  not anything taken from the message (RFC 8032, section 8.3). An empty Ed25519ctx context is refused, as OpenSSL refuses
+  it: the RFC says it SHOULD NOT be empty, and it would be easy to take for plain Ed25519, whose signatures are different.
+  Ed25519ph takes a SHA-512 digest, as a `[u8; 64]`, so a digest of another length does not compile.
+- **The arithmetic is written not to depend on secrets, and that is checked in one way only.** No branch condition or
+  memory address is derived from the seed, the secret scalar, the prefix or a per-message secret: `[s]B` goes through a
+  table lookup that reads all eight entries of a row and keeps one with masks, the formulas are complete, so they have no
+  special cases to branch on, and the inverse that encodes a point is a power with a fixed exponent. The masks go through
+  `core::hint::black_box`, because a compiler may turn a mask back into a jump, and `black_box` is a request, not a
+  guarantee (it costs about 2.5% of a signature). What backs the claim is the assembly that `rustc` 1.95 produced, in a
+  release build, for `aarch64-apple-darwin` and `x86_64-unknown-linux-gnu`, which was inspected: in the functions that
+  derive a key and sign, the conditional jumps are loops over a public number of windows, table entries, words or
+  squarings; the check of whether the table of multiples of B has been built; checks of public lengths (of the message
+  and the context) and of an allocation; and, in `from_keypair_bytes`, the comparison of the two halves of a key pair,
+  which stops at the first byte that differs and compares public keys only. The point arithmetic and the encoding of a
+  point have none at all. The hashing is SHA-512, whose work and memory accesses depend only on the
+  length of its input (see [SHA-512](#sha-512)). That is one compiler's output for two targets, with no timing
+  measurement on real hardware behind it, and nothing protects against attacks that read power consumption or inject
+  faults. Verifying handles no secret, and its time depends on its inputs.
+- **Keys stay in memory for as long as they exist.** The seed, the secret scalar and the prefix of a `SigningKey` are
+  overwritten with zeros when it is dropped, as are the copies the crate makes of them (the digest of the seed, the
+  per-message secret and its digits, the prefix in the hash input), and `Debug` shows only the public key. That is best
+  effort: the working values of the arithmetic (points and numbers that depend on a key, on the stack and in registers
+  while it is in use), what SHA-512 copies onto its own stack, and the copy that moving a key (into a `Box` or a `Vec`,
+  say) can leave behind are not overwritten.
+
+### Testing
+
+```sh
+cargo test -- ed25519 ec::fe25519   # RFC 8032, Go's vectors, 768 signatures from Go and OpenSSL, every verification rule, and the arithmetic against references
+```
+
+The known-answer tests are every example of RFC 8032 for these three schemes: the five of section 7.1 for Ed25519 (with
+the 1023-byte message and SHA(abc)), the four of section 7.2 for Ed25519ctx and the one of section 7.3 for Ed25519ph. The
+rest of the confidence comes from other kinds of test:
+
+- **Go's vectors.** The 128 lines of `crypto/ed25519/testdata/sign.input.gz`, a selection from the file the authors of
+  Ed25519 published with their software: a key, its public key, a message of up to 1023 bytes and its signature, read in
+  Go's 64-byte format. The file is in `src/ed25519/testdata/sign.input`, decompressed but otherwise unchanged, so that it
+  can be compared with Go's.
+- **768 signatures from Go and OpenSSL.** 256 keys derived from SHA-256, each signing a message of 0 to 255 bytes under
+  each of the three schemes, with every context length from 0 to 255, so that the hash inputs end on both sides of
+  SHA-512's block boundaries. The SHA-256 of the outputs comes from Go's `crypto/ed25519`, and `bench/ed25519cmp`
+  recomputes it. OpenSSL 3.6 makes the same signatures, all but the three of the empty message, which its command line
+  cannot sign.
+- **Every rule of verification.** Every bit of a signature, of a public key and of a message flipped; S + ℓ, ℓ and
+  2^256 - 1 as S, and the malleated signature of Go's own test; the identity as R, encoded canonically (accepted) and in
+  two non-canonical ways (refused); all 40 non-canonical encodings of a public key, and the eight points of small order;
+  and, to pin down the cofactorless equation, a key with a component of order 8, under which a signature verifies exactly
+  when the challenge is a multiple of 8. Go's `crypto/ed25519` gives the same verdicts on the R and cofactor cases.
+- **Go's edge cases.** Once, outside the tests, the 768 cases of Filippo Valsorda's `ed25519vectors`, the set that Go's
+  own test downloads (points of small order, non-canonical encodings and mixed-order components, for A and for R): this
+  crate gives the same verdict as Go on 656 of them, and each of the other 112 has a public key of small order, which
+  `VerifyingKey::from_bytes` refuses and Go accepts.
+- **Differential tests.** The field, which X25519 shares and whose tests are in `src/ec/fe25519.rs`, against the generic
+  Montgomery field of the NIST curves (`src/ec/field.rs`), with limbs at the largest values its bounds allow, which no
+  input from the curve comes near, and for the parts that only Ed25519 uses (the negation, the power that takes a
+  square root, the square root of a ratio, the sign); the reduction and the
+  multiplication of scalars against a bit-at-a-time reference, at the values where Barrett reduction can go wrong; and
+  verification's double multiplication against plain double-and-add, at scalars such as 0, ℓ - 1 and repeated bit
+  patterns, since S is whatever the sender of a signature chose.
+- **Mutation testing.** 31 small changes to the code (a constant, an offset, a dropped check, a loop bound) in the field,
+  the scalars, the points, the signing and verifying code and `generate`, each applied to a scratch copy: 30 make a test
+  fail, and the one that survives is the overwriting of the digest of the seed, which cannot be observed. Every test of
+  `src/ed25519/` but the published vectors is the only one to catch at least one of them, and tests that could not be
+  shown to do so were left out. A Barrett constant off by one, a carry lost when two scalars are multiplied, and the offset of the field's
+  subtraction cut from 16 times the prime to twice, pass every known answer and are caught only by the reference tests;
+  a context length written in 7 bits instead of 8 is caught only by the 768 signatures, whose contexts reach 255 bytes.
+
+The tests also cover the other behaviour of the API: the longest context and one byte more, an empty Ed25519ctx
+context, slices of the wrong length, a key pair whose halves do not match, `generate` with a reader that has 32 bytes and
+one that runs out, that `Debug` shows no secret, and that a signing key leaves nothing behind after it is dropped.
+
+### Benchmarking
+
+```sh
+# cryptors: one test thread, so the benchmarks don't compete with each other for the CPU.
+cargo test --release ed25519 -- --ignored --nocapture --test-threads=1
+cd bench/ed25519cmp && go test -v -run TestThroughput               # Go's crypto/ed25519 as shipped
+cd bench/ed25519cmp && go test -tags purego -v -run TestThroughput  # Go with no assembly
+```
+
+Both sides time four operations on the same seed and the same 128-byte message: building a signing key from its seed
+(a SHA-512 digest and a multiplication of B, to have the public key), building a verifying key from its bytes (decoding
+a point), signing, and verifying as Go's `ed25519.Verify` does it, which decodes the key every time; cryptors also times a
+verification with the key decoded once. Go has no call that only decodes a key, so its second row times
+`VerifyWithOptions` with an empty signature, which in Go 1.27.1 decodes the key and then stops at the check of the
+signature's length (the test checks that it still does). Each runs for about 50 ms to size a batch of about 100 ms, and
+the best of five batches is reported. Generating a key from random bytes is not timed. Both print the first 8 bytes of
+the public key and of the signature, and all three runs print the same.
+
+On an Apple M1 Pro, against Go 1.27.1's `crypto/ed25519` on the same machine (medians of five interleaved runs, in
+microseconds per operation, lower is better):
+
+| Operation | cryptors | Go stdlib | Go portable (`purego`) |
+|-----------|----------|-----------|------------------------|
+| new signing key | **9.76** | 16.03 | 16.22 |
+| new verifying key | **2.82** | 3.50 | 3.49 |
+| sign | **10.13** | 19.86 | 20.64 |
+| verify | **31.12** | 41.55 | 41.85 |
+| verify, key decoded once | 28.23 | — | — |
+
+Run-to-run spread was within about 5% in every cell but one (a single run of Go's `purego` verification took 62 µs),
+but the machine was not idle (load average 4 to 7.5, with other builds and benchmarks in different workspaces), so the
+last digit means little.
+
+Per operation:
+
+- **Signing is 1.96x faster than Go's, and building a key 1.64x.** Go has no assembly for edwards25519 on arm64, so this
+  is portable code against portable code, and both use five limbs of 51 bits. Building a key and signing each come down to
+  one multiplication of B (about 6.9 µs here) and one inversion to encode the point (about 2.5 µs). Signing costs 0.4 µs
+  more than building a key here (a second hash and the arithmetic of the scalars) and 3.8 µs more in Go. No profile of Go
+  was taken, so this does not say where its time goes.
+- **Verifying is 1.34x faster.** It is one chain of about 253 doublings shared by `[S]B` and `[k]A`, with an addition at
+  each nonzero digit of their non-adjacent forms (about 25 µs here), then the inversion that encodes the result. Decoding
+  the public key is the difference between the last two rows, 2.9 µs, and is 3.5 µs in Go; it is a power of the same size as
+  the inversion. Verifying takes about three times a signature because of those doublings: the multiplication of B
+  in a signature has a table for every window of the scalar and so needs only 4 of them, for 64 additions, where
+  verifying needs 253, for about as many additions.
+- **`purego` changes little here.** Go has no arm64 assembly for the curve, so on this machine the tag only takes SHA-512
+  off the instructions, which costs up to 4%. On x86-64 Go's field multiplication and squaring are assembly too, and its
+  `purego` build is the like-for-like one there.
+
+The first version of this code was 3% to 6% slower: 10.10 µs for a new signing key, 10.52 for a signature and 32.87 for a
+verification (one run of each, with the harness above). Two changes made the difference, each measured on its own. The
+first is in the field: additions that do not carry (a sum of two results goes straight into a product, which takes limbs
+up to 2^54), a subtraction that adds 16 times the prime instead of twice so that it takes such a sum on its right too,
+and a squaring written out instead of a loop that runs once (12.1 ns against 15.6 for a square, in a microbenchmark);
+together they gave 2% to 6% on every operation. The second is one mask for each entry of the table of B instead of one
+for each of its three numbers, which took 4% off the multiplication of B. Two things were measured and dropped: a window
+of 6 bits for A in place of 5 (1% slower), and putting the hash input on the stack instead of in a `Vec` (no difference
+that the noise let through). The field was Ed25519's own at first, with the same representation as the field of
+X25519, whose additions that do not carry are where the first change came from. The two are now one module,
+`src/ec/fe25519.rs`, with X25519's interface and Ed25519's way of carrying after a product: from the five columns at once
+rather than one after the other, which in a microbenchmark made a product 8% faster and an inversion 14%. That made
+X25519 about 10% faster (see [ECDH](#ecdh)) and left Ed25519 where it was.
+
+What would make it faster, none of it done: an inversion by the constant-time algorithm of Bernstein and Yang (2019)
+instead of a power with 254 squarings, since inverting is a quarter of a signature and a key, and decoding a key is a
+power of the same size; for verifying, keeping the eight multiples of A in a `VerifyingKey` (by a count of the
+operations, about 0.6 µs off each verification under a key that was decoded once, for 1.3 KiB per key), a wider window for B than the 8 bits that digits of one byte
+allow, and batch verification of many signatures at once, which needs randomness; a SHA-512 that takes its input in
+pieces, so that the message is not copied into each hash input (twice per signature, once per verification), which only
+long messages would notice; and, on x86-64, a backend for BMI2 and ADX behind a run-time check, as for ECDH. Nothing here
+can run that one to see what it would gain.
+
+No x86 figures are given yet, for the same reason as the others: nothing here can time real x86 hardware, and Rosetta 2
+translates the instructions, so its timings say nothing about an x86 CPU. The manual `Benchmarks` workflow
+(`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
+
 ## HKDF
 
 HKDF, the HMAC-based Extract-and-Expand Key Derivation Function of [RFC 5869](https://www.rfc-editor.org/info/rfc5869),
@@ -1160,8 +1450,9 @@ skips Extract for a secret that is a uniformly random key already, such as an ea
 | SHA-512/224 | `Sha512_224` | 28 bytes | 128 bytes | 7140 bytes |
 | SHA-512/256 | `Sha512_256` | 32 bytes | 128 bytes | 8160 bytes |
 
-SHA-3 is not on `Digest` yet (see [Example](#example)), so there is no HKDF-SHA3. HMAC is on the list above as a module of
-its own, and until it lands, `src/hkdf/hmac.rs` holds a private stand-in with the two functions HKDF needs from it.
+SHA-3 is not on `Digest` yet (see [Example](#example)), so there is no HKDF-SHA3. The HMAC is the crate's own
+([HMAC](#hmac)): an `Hkdf` is an `Hmac<D>` keyed with the PRK, which hashes its padded keys once and starts every block of
+output from the states that leaves.
 
 ### Usage
 
@@ -1258,11 +1549,11 @@ eight:
   longer than any block.
 
 The tests also cover the rest of the API: an empty salt gives the PRK of HashLen zeros, `from_prk` refuses a key one byte
-short and takes one of HashLen, and `Debug` shows no secret. That dropping an `Hkdf` wipes its key is not tested: the key
-is on the heap, in the stand-in HMAC, and cannot be read once it is freed. A scratch copy of the code with each of 15
-deliberate breaks (a pad byte changed, a counter starting at 0 or stopping at 254, a length check off by one, keys of
-exactly one block hashed, the stack buffer overrun, ...) fails at least one test for every break but one, which put every
-message on the heap and is not a bug.
+short and takes one of HashLen, dropping an `Hkdf` leaves every byte of it zero (it is nothing but its `Hmac`, two hash
+states with no padding between their fields), and `Debug` shows no secret. A scratch copy of `src/hkdf/kdf.rs` with each
+of 11 deliberate breaks (the salt and the IKM swapped, a PRK cut to HashLen, a counter starting at 0 or stopping at 254, a
+length check off by one, the `Hmac` never dropped, ...) fails at least one test for every one of them. HMAC itself is
+tested in its own module; see [HMAC](#hmac).
 
 ### Benchmarking
 
@@ -1280,36 +1571,43 @@ first 8 of the last key of the chain, and the two sides print the same. HKDF has
 backend its hash picks, FEAT_SHA256 and FEAT_SHA512 here, on both sides. `-tags purego` is not run, as there is no
 HKDF code to swap; the hashes have runs of their own, under [SHA-256](#sha-256) and [SHA-512](#sha-512).
 
-On an Apple M1 Pro, against Go 1.27.1's `crypto/hkdf` on the same machine (medians of three interleaved runs, higher is
+On an Apple M1 Pro, against Go 1.27.1's `crypto/hkdf` on the same machine (medians of five interleaved runs, higher is
 better):
-
-<!-- provisional: re-measure in phase 2 -->
 
 | Workload | cryptors | Go stdlib |
 |----------|----------|-----------|
-| HKDF-SHA256, Expand to 8160 bytes | 135 MiB/s | **240 MiB/s** |
-| HKDF-SHA256, Extract and Expand to a 32-byte key | **2.35 M/s** | 1.44 M/s |
-| HKDF-SHA512, Expand to 16320 bytes | 99 MiB/s | **214 MiB/s** |
-| HKDF-SHA512, Extract and Expand to a 32-byte key | **828 k/s** | 641 k/s |
+| HKDF-SHA256, Expand to 8160 bytes | **356 MiB/s** | 247 MiB/s |
+| HKDF-SHA256, Extract and Expand to a 32-byte key | **3.10 M/s** | 1.45 M/s |
+| HKDF-SHA512, Expand to 16320 bytes | **274 MiB/s** | 221 MiB/s |
+| HKDF-SHA512, Extract and Expand to a 32-byte key | **1.28 M/s** | 660 k/s |
+
+Run-to-run spread was within 2% in every cell, but the machine was not idle (a desktop, load average 3 to 5, with other
+work running in other workspaces), so the last digit means little. cryptors is ahead on all four rows.
 
 Per workload:
 
-- **Short keys: cryptors is 1.64x (SHA-256) and 1.29x (SHA-512) faster.** No HMAC key is used for more than one block
-  here, so both sides hash the same blocks, and the difference is in the work around the hash. Go's `hkdf.Key`, for one,
-  allocates two HMAC objects and their four hash states on every call.
-- **Long outputs: Go is 1.78x (SHA-256) and 2.17x (SHA-512) faster.** Go's HMAC hashes the padded key once, saves the
-  hash states after it, and restores them for every later block. The stand-in HMAC here cannot, because `Digest` hashes a
-  whole message in one call, so it hashes the padded key again for each of the 255 blocks: four calls of the compression
-  function per block of output, where Go needs two. The rest is the wiping of HMAC's buffers, one volatile byte store at
-  a time; in one run with it removed, Expand was 1.41x (SHA-256) and 1.30x (SHA-512) faster.
+- **Long outputs: cryptors is 1.44x (SHA-256) and 1.24x (SHA-512) faster.** Both sides hash the padded keys once, keep
+  the hash states after them, and start every block from those: two calls of the compression function per block of
+  output. The difference is in the work around them. From the second block on, Go restores its two states from their
+  marshaled bytes for every block, behind the `hash.Hash` interface, and it allocates each output; cryptors copies the
+  states and writes into the caller's buffer. Before the crate had an HMAC, HKDF ran on a stand-in that hashed the padded keys again for every block, four
+  calls instead of two, and Expand measured 135 and 99 MiB/s in three runs: 1.78x and 2.17x behind Go, where it is now
+  ahead.
+- **Short keys: cryptors is 2.15x (SHA-256) and 1.94x (SHA-512) faster.** For a 32-byte key both sides make the same
+  eight calls of the compression function: two to key HMAC with the salt, two for the PRK, two to key HMAC with the PRK,
+  and two for the one block of output. Go's `hkdf.Key` also allocates two HMAC objects with their four hash states, and
+  the output, on every call; cryptors allocates nothing.
 
-These figures are for the stand-in HMAC in `src/hkdf/hmac.rs`, and will move when HKDF switches to the crate's own.
+Measured against the bare hashes in their own sections (2365 MiB/s for SHA-256, 1386 for SHA-512), two calls of the
+compression function per block would allow about 590 MiB/s of SHA-256 output and about 345 of SHA-512. The figures
+above are 60% and 79% of that. The rest goes outside the compression function: copying the two states that each block
+starts from, wiping the copies afterwards, and the padding. How it splits between those was not measured.
 
-What would make it faster, none of it done: an HMAC that keeps the state of the hash after the padded key, which needs
-`Digest` to hash a message in pieces, and would halve the work of a long Expand; wiping with wider stores than one byte;
-and, for many derivations at once, hashing their blocks side by side as MD5 and SHA-3 do with their `_many` functions,
-which SHA-2 does not have. Within one Expand there is nothing to run side by side, since each block needs the one
-before it.
+What would make it faster, none of it done: an Expand that started every block from one pair of scratch states, copied
+into from the saved ones and wiped once at the end rather than after every block, which needs a way into HMAC that the
+crate does not have; and, for many derivations at once, hashing their blocks side by side as MD5 and SHA-3 do with their
+`_many` functions, which SHA-2 does not have. Within one Expand there is nothing to run side by side, since each block
+needs the one before it.
 
 No x86 figures are given yet, for the same reason as the others: nothing here can time real x86 hardware, and Rosetta 2
 translates the instructions, so its timings say nothing about an x86 CPU. The manual `Benchmarks` workflow
@@ -1469,76 +1767,6 @@ the hashes in pieces, the wipes) and seeing it fail.
 
 ```sh
 # cryptors: one test thread, so the benchmarks don't compete with each other for the CPU.
-
-cargo test --release ed25519 -- --ignored --nocapture --test-threads=1
-cd bench/ed25519cmp && go test -v -run TestThroughput               # Go's crypto/ed25519 as shipped
-cd bench/ed25519cmp && go test -tags purego -v -run TestThroughput  # Go with no assembly
-```
-
-Both sides time four operations on the same seed and the same 128-byte message: building a signing key from its seed
-(a SHA-512 digest and a multiplication of B, to have the public key), building a verifying key from its bytes (decoding
-a point), signing, and verifying as Go's `ed25519.Verify` does it, which decodes the key every time; cryptors also times a
-verification with the key decoded once. Go has no call that only decodes a key, so its second row times
-`VerifyWithOptions` with an empty signature, which in Go 1.27.1 decodes the key and then stops at the check of the
-signature's length (the test checks that it still does). Each runs for about 50 ms to size a batch of about 100 ms, and
-the best of five batches is reported. Generating a key from random bytes is not timed. Both print the first 8 bytes of
-the public key and of the signature, and all three runs print the same.
-
-On an Apple M1 Pro, against Go 1.27.1's `crypto/ed25519` on the same machine (medians of five interleaved runs, in
-microseconds per operation, lower is better):
-
-| Operation | cryptors | Go stdlib | Go portable (`purego`) |
-|-----------|----------|-----------|------------------------|
-| new signing key | **9.76** | 16.03 | 16.22 |
-| new verifying key | **2.82** | 3.50 | 3.49 |
-| sign | **10.13** | 19.86 | 20.64 |
-| verify | **31.12** | 41.55 | 41.85 |
-| verify, key decoded once | 28.23 | — | — |
-
-Run-to-run spread was within about 5% in every cell but one (a single run of Go's `purego` verification took 62 µs),
-but the machine was not idle (load average 4 to 7.5, with other builds and benchmarks in different workspaces), so the
-last digit means little.
-
-Per operation:
-
-- **Signing is 1.96x faster than Go's, and building a key 1.64x.** Go has no assembly for edwards25519 on arm64, so this
-  is portable code against portable code, and both use five limbs of 51 bits. Building a key and signing each come down to
-  one multiplication of B (about 6.9 µs here) and one inversion to encode the point (about 2.5 µs). Signing costs 0.4 µs
-  more than building a key here (a second hash and the arithmetic of the scalars) and 3.8 µs more in Go. No profile of Go
-  was taken, so this does not say where its time goes.
-- **Verifying is 1.34x faster.** It is one chain of about 253 doublings shared by `[S]B` and `[k]A`, with an addition at
-  each nonzero digit of their non-adjacent forms (about 25 µs here), then the inversion that encodes the result. Decoding
-  the public key is the difference between the last two rows, 2.9 µs, and is 3.5 µs in Go; it is a power of the same size as
-  the inversion. Verifying takes about three times a signature because of those doublings: the multiplication of B
-  in a signature has a table for every window of the scalar and so needs only 4 of them, for 64 additions, where
-  verifying needs 253, for about as many additions.
-- **`purego` changes little here.** Go has no arm64 assembly for the curve, so on this machine the tag only takes SHA-512
-  off the instructions, which costs up to 4%. On x86-64 Go's field multiplication and squaring are assembly too, and its
-  `purego` build is the like-for-like one there.
-
-The first version of this code was 3% to 6% slower: 10.10 µs for a new signing key, 10.52 for a signature and 32.87 for a
-verification (one run of each, with the harness above). Two changes made the difference, each measured on its own. The
-first is in the field: additions that do not carry (a sum of two results goes straight into a product, which takes limbs
-up to 2^54), a subtraction that adds 16 times the prime instead of twice so that it takes such a sum on its right too,
-and a squaring written out instead of a loop that runs once (12.1 ns against 15.6 for a square, in a microbenchmark);
-together they gave 2% to 6% on every operation. The second is one mask for each entry of the table of B instead of one
-for each of its three numbers, which took 4% off the multiplication of B. Two things were measured and dropped: a window
-of 6 bits for A in place of 5 (1% slower), and putting the hash input on the stack instead of in a `Vec` (no difference
-that the noise let through). The field was Ed25519's own at first, with the same representation as the field of
-X25519, whose additions that do not carry are where the first change came from. The two are now one module,
-`src/ec/fe25519.rs`, with X25519's interface and Ed25519's way of carrying after a product: from the five columns at once
-rather than one after the other, which in a microbenchmark made a product 8% faster and an inversion 14%. That made
-X25519 about 10% faster (see [ECDH](#ecdh)) and left Ed25519 where it was.
-
-What would make it faster, none of it done: an inversion by the constant-time algorithm of Bernstein and Yang (2019)
-instead of a power with 254 squarings, since inverting is a quarter of a signature and a key, and decoding a key is a
-power of the same size; for verifying, keeping the eight multiples of A in a `VerifyingKey` (by a count of the
-operations, about 0.6 µs off each verification under a key that was decoded once, for 1.3 KiB per key), a wider window for B than the 8 bits that digits of one byte
-allow, and batch verification of many signatures at once, which needs randomness; a SHA-512 that takes its input in
-pieces, so that the message is not copied into each hash input (twice per signature, once per verification), which only
-long messages would notice; and, on x86-64, a backend for BMI2 and ADX behind a run-time check, as for ECDH. Nothing here
-can run that one to see what it would gain.
-=======
 cargo test --release hmac:: -- --ignored --nocapture --test-threads=1
 cd bench/hmaccmp && go test -v                       # Go's crypto/hmac, on Go's hashes as shipped
 ```
