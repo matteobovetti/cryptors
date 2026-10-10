@@ -4,9 +4,12 @@
 use core::fmt;
 
 use super::secret::Secret;
-use super::{Error, Kdf, Kem};
+use super::suite::{labeled_expand, labeled_extract};
+use super::{Error, Kem};
+use crate::Digest;
 use crate::digest::hex;
 use crate::ecdh::{self, Curve, P256, P384, P521, X25519};
+use crate::sha2::{Sha256, Sha384, Sha512};
 
 /// What DHKEM needs of a group beyond ECDH itself (RFC 9180 section 7.1), and
 /// how its keys go in and out of the KEM-agnostic [`PrivateKey`] and
@@ -14,9 +17,9 @@ use crate::ecdh::{self, Curve, P256, P384, P521, X25519};
 trait Group: Curve {
     /// The KEM built on this group.
     const KEM: Kem;
-    /// The KDF of the KEM, which `DeriveKeyPair` and `ExtractAndExpand` use
-    /// whatever the KDF of the suite is.
-    const KDF: Kdf;
+    /// The hash of the KEM's HKDF, which `DeriveKeyPair` and
+    /// `ExtractAndExpand` use whatever the KDF of the suite is.
+    type Hash: Digest;
     /// The mask of `DeriveKeyPair`'s rejection sampling (RFC 9180 section
     /// 7.1.3): `0xff` for P-256 and P-384, `0x01` for P-521, whose order has
     /// only one bit in its first byte. `None` for X25519, which takes the
@@ -30,10 +33,10 @@ trait Group: Curve {
 }
 
 macro_rules! group {
-    ($curve:ident, $kem:ident, $kdf:ident, $bitmask:expr) => {
+    ($curve:ident, $kem:ident, $hash:ident, $bitmask:expr) => {
         impl Group for $curve {
             const KEM: Kem = Kem::$kem;
-            const KDF: Kdf = Kdf::$kdf;
+            type Hash = $hash;
             const BITMASK: Option<u8> = $bitmask;
 
             fn private(key: ecdh::PrivateKey<Self>) -> Private {
@@ -61,10 +64,10 @@ macro_rules! group {
     };
 }
 
-group!(P256, P256HkdfSha256, HkdfSha256, Some(0xff));
-group!(P384, P384HkdfSha384, HkdfSha384, Some(0xff));
-group!(P521, P521HkdfSha512, HkdfSha512, Some(0x01));
-group!(X25519, X25519HkdfSha256, HkdfSha256, None);
+group!(P256, P256HkdfSha256, Sha256, Some(0xff));
+group!(P384, P384HkdfSha384, Sha384, Some(0xff));
+group!(P521, P521HkdfSha512, Sha512, Some(0x01));
+group!(X25519, X25519HkdfSha256, Sha256, None);
 
 /// A private key of one of the four KEMs, wrapping the crate's ECDH key.
 #[derive(Clone)]
@@ -352,17 +355,11 @@ fn derive_key_pair<G: Group>(ikm: &[u8]) -> Result<ecdh::PrivateKey<G>, Error> {
         return Err(Error::IkmTooShort);
     }
     let suite_id = suite_id(G::KEM);
-    let dkp_prk = G::KDF.labeled_extract(&suite_id, b"", b"dkp_prk", ikm);
+    // One PRK, keyed into HMAC once, for every candidate.
+    let dkp_prk = labeled_extract::<G::Hash>(&suite_id, b"", b"dkp_prk", ikm);
     let mut sk = Secret::zeroed(G::PRIVATE_KEY_LEN);
     let expand = |label: &[u8], info: &[u8], out: &mut Secret| {
-        G::KDF
-            .labeled_expand(
-                &suite_id,
-                dkp_prk.as_bytes(),
-                label,
-                info,
-                out.as_mut_bytes(),
-            )
+        labeled_expand(&dkp_prk, &suite_id, label, info, out.as_mut_bytes())
             .expect("a private key is within every KDF's limit");
     };
 
@@ -398,20 +395,19 @@ fn dh<G: Group>(sk: &ecdh::PrivateKey<G>, pk: &ecdh::PublicKey<G>) -> Result<Sec
 }
 
 /// `ExtractAndExpand(dh, kem_context)` (RFC 9180 section 4.1), with the KDF of
-/// the KEM: the KEM shared secret, `Nsecret` (the KDF's hash length) bytes.
+/// the KEM: the KEM shared secret, `Nsecret` (the hash's output length) bytes.
 fn extract_and_expand<G: Group>(dh: &Secret, kem_context: &[&[u8]]) -> Secret {
     let suite_id = suite_id(G::KEM);
-    let eae_prk = G::KDF.labeled_extract(&suite_id, b"", b"eae_prk", dh.as_bytes());
-    let mut shared_secret = Secret::zeroed(G::KDF.hash_len());
-    G::KDF
-        .labeled_expand(
-            &suite_id,
-            eae_prk.as_bytes(),
-            b"shared_secret",
-            &kem_context.concat(),
-            shared_secret.as_mut_bytes(),
-        )
-        .expect("a hash length is within every KDF's limit");
+    let eae_prk = labeled_extract::<G::Hash>(&suite_id, b"", b"eae_prk", dh.as_bytes());
+    let mut shared_secret = Secret::zeroed(G::Hash::OUTPUT_LEN);
+    labeled_expand(
+        &eae_prk,
+        &suite_id,
+        b"shared_secret",
+        &kem_context.concat(),
+        shared_secret.as_mut_bytes(),
+    )
+    .expect("a hash output is within every KDF's limit");
     shared_secret
 }
 

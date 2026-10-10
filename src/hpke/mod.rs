@@ -202,7 +202,6 @@
 
 mod context;
 mod error;
-mod kdf;
 mod kem;
 mod secret;
 mod suite;

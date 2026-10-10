@@ -6,9 +6,13 @@ use core::fmt;
 
 use super::kem::{self, PrivateKey, PublicKey};
 use super::secret::Secret;
-use super::{Aead, Error, Suite};
+use super::suite::{labeled_expand, labeled_extract, labeled_extract_bytes};
+use super::{Aead, Error, Kdf, Suite};
+use crate::Digest;
 use crate::aes::{Aes128, Aes256};
 use crate::gcm::{Gcm, NONCE_LEN, NotAuthentic, TooLong};
+use crate::hkdf::Hkdf;
+use crate::sha2::{Sha256, Sha384, Sha512};
 use crate::wipe::wipe;
 
 /// The shortest pre-shared key accepted: RFC 9180 requires a PSK to have at
@@ -209,23 +213,37 @@ pub(super) fn key_schedule(
     psk_id: &[u8],
 ) -> Result<Schedule, Error> {
     verify_psk_inputs(mode, psk, psk_id)?;
-    let (suite_id, kdf) = (suite.id(), suite.kdf());
+    // The hash is chosen here, once, and everything below is generic over it.
+    let schedule = match suite.kdf() {
+        Kdf::HkdfSha256 => schedule::<Sha256>,
+        Kdf::HkdfSha384 => schedule::<Sha384>,
+        Kdf::HkdfSha512 => schedule::<Sha512>,
+    };
+    Ok(schedule(suite, mode, shared_secret, info, psk, psk_id))
+}
 
-    let psk_id_hash = kdf.labeled_extract(&suite_id, b"", b"psk_id_hash", psk_id);
-    let info_hash = kdf.labeled_extract(&suite_id, b"", b"info_hash", info);
-    let key_schedule_context = [
-        &[mode.id()][..],
-        psk_id_hash.as_bytes(),
-        info_hash.as_bytes(),
-    ]
-    .concat();
+/// The derivations of [`key_schedule`], with the suite's KDF on the hash `D`.
+fn schedule<D: Digest>(
+    suite: Suite,
+    mode: Mode,
+    shared_secret: &[u8],
+    info: &[u8],
+    psk: &[u8],
+    psk_id: &[u8],
+) -> Schedule {
+    let suite_id = suite.id();
+    let psk_id_hash = labeled_extract_bytes::<D>(&suite_id, b"", b"psk_id_hash", psk_id);
+    let info_hash = labeled_extract_bytes::<D>(&suite_id, b"", b"info_hash", info);
+    let key_schedule_context =
+        [&[mode.id()][..], psk_id_hash.as_ref(), info_hash.as_ref()].concat();
 
-    let secret = kdf.labeled_extract(&suite_id, shared_secret, b"secret", psk);
+    // One PRK, keyed into HMAC once, for the three expansions.
+    let secret = labeled_extract::<D>(&suite_id, shared_secret, b"secret", psk);
     let expand = |label: &[u8], len: usize| {
         let mut out = Secret::zeroed(len);
-        kdf.labeled_expand(
+        labeled_expand(
+            &secret,
             &suite_id,
-            secret.as_bytes(),
             label,
             &key_schedule_context,
             out.as_mut_bytes(),
@@ -246,11 +264,47 @@ pub(super) fn key_schedule(
     } else {
         (expand(b"key", key_len), expand(b"base_nonce", nonce_len))
     };
-    Ok(Schedule {
+    Schedule {
         key,
         base_nonce,
-        exporter_secret: expand(b"exp", kdf.hash_len()),
-    })
+        exporter_secret: expand(b"exp", D::OUTPUT_LEN),
+    }
+}
+
+/// The exporter secret as HKDF on the suite's hash, keyed into HMAC once for
+/// every export of the context (RFC 9180 section 5.3).
+enum Exporter {
+    Sha256(Hkdf<Sha256>),
+    Sha384(Hkdf<Sha384>),
+    Sha512(Hkdf<Sha512>),
+}
+
+impl Exporter {
+    fn new(kdf: Kdf, exporter_secret: &[u8]) -> Self {
+        // The exporter secret is `Nh` bytes, one hash output, which is what
+        // a PRK has to be.
+        let prk = "the exporter secret is one hash output long";
+        match kdf {
+            Kdf::HkdfSha256 => Exporter::Sha256(Hkdf::from_prk(exporter_secret).expect(prk)),
+            Kdf::HkdfSha384 => Exporter::Sha384(Hkdf::from_prk(exporter_secret).expect(prk)),
+            Kdf::HkdfSha512 => Exporter::Sha512(Hkdf::from_prk(exporter_secret).expect(prk)),
+        }
+    }
+
+    /// `LabeledExpand(exporter_secret, "sec", exporter_context, L)`, into `out`.
+    fn export(
+        &self,
+        suite_id: &[u8],
+        exporter_context: &[u8],
+        out: &mut [u8],
+    ) -> Result<(), Error> {
+        match self {
+            Exporter::Sha256(prk) => labeled_expand(prk, suite_id, b"sec", exporter_context, out),
+            Exporter::Sha384(prk) => labeled_expand(prk, suite_id, b"sec", exporter_context, out),
+            Exporter::Sha512(prk) => labeled_expand(prk, suite_id, b"sec", exporter_context, out),
+        }
+        .map_err(|_| Error::ExportTooLong)
+    }
 }
 
 /// A keyed AEAD.
@@ -280,13 +334,14 @@ impl Cipher {
 
 /// An encryption context (RFC 9180 section 5.2): the AEAD, its base nonce
 /// and sequence number, and the exporter secret. The secrets are wiped when it
-/// is dropped: the AEAD's by the cipher and the rest by [`Secret`].
+/// is dropped: the AEAD's by the cipher, the exporter secret by [`Hkdf`] and the
+/// base nonce by [`Secret`].
 struct Context {
     suite: Suite,
     cipher: Cipher,
     base_nonce: Secret,
     seq: u128,
-    exporter_secret: Secret,
+    exporter: Exporter,
 }
 
 impl Context {
@@ -296,7 +351,7 @@ impl Context {
             cipher: Cipher::new(suite.aead(), schedule.key.as_bytes()),
             base_nonce: schedule.base_nonce,
             seq: 0,
-            exporter_secret: schedule.exporter_secret,
+            exporter: Exporter::new(suite.kdf(), schedule.exporter_secret.as_bytes()),
         }
     }
 
@@ -348,14 +403,8 @@ impl Context {
             return Err(Error::ExportTooLong);
         }
         let mut out = vec![0u8; len];
-        kdf.labeled_expand(
-            &self.suite.id(),
-            self.exporter_secret.as_bytes(),
-            b"sec",
-            exporter_context,
-            &mut out,
-        )
-        .map_err(|_| Error::ExportTooLong)?;
+        self.exporter
+            .export(&self.suite.id(), exporter_context, &mut out)?;
         Ok(out)
     }
 }

@@ -1,9 +1,65 @@
-//! The algorithms of a suite (RFC 9180 section 7).
+//! The algorithms of a suite (RFC 9180 section 7), and the labelled forms of
+//! HKDF that HPKE derives every key with (section 4).
 
 use super::Error;
-use super::kdf::{self, OutputTooLong};
-use super::secret::Secret;
-use crate::sha2::{Sha256, Sha384, Sha512};
+use crate::Digest;
+use crate::hkdf::{self, Hkdf};
+use crate::hmac::Hmac;
+
+/// The version label that starts every derivation in HPKE (RFC 9180 section
+/// 4), so that its secrets are bound to the scheme and its version.
+const VERSION: &[u8] = b"HPKE-v1";
+
+/// `LabeledExtract(salt, label, ikm)` (RFC 9180 section 4): HKDF-Extract of
+/// `"HPKE-v1" || suite_id || label || ikm`, as the bytes of the pseudorandom
+/// key.
+///
+/// Extract is the HMAC of the input keying material under the salt (RFC 5869
+/// section 2.2), and HMAC takes the four parts one after the other, so they are
+/// never copied together, and the secret among them never lands in a buffer
+/// of this module. `suite_id` says where in HPKE the call is made: `"KEM"` and
+/// the KEM's identifier inside the KEM, `"HPKE"` and the whole suite's
+/// elsewhere.
+pub(super) fn labeled_extract_bytes<D: Digest>(
+    suite_id: &[u8],
+    salt: &[u8],
+    label: &[u8],
+    ikm: &[u8],
+) -> D::Output {
+    Hmac::<D>::new(salt).mac_parts(&[VERSION, suite_id, label, ikm])
+}
+
+/// `LabeledExtract(salt, label, ikm)` as a [`Hkdf`], ready to expand: HMAC keyed
+/// with the pseudorandom key once, for every [`labeled_expand`] from it.
+pub(super) fn labeled_extract<D: Digest>(
+    suite_id: &[u8],
+    salt: &[u8],
+    label: &[u8],
+    ikm: &[u8],
+) -> Hkdf<D> {
+    let prk = labeled_extract_bytes::<D>(suite_id, salt, label, ikm);
+    Hkdf::from_prk(prk.as_ref()).expect("an extracted key is one hash output long")
+}
+
+/// `LabeledExpand(prk, label, info, L)` (RFC 9180 section 4): HKDF-Expand with
+/// the info `I2OSP(L, 2) || "HPKE-v1" || suite_id || label || info`, where `L`
+/// is the length of `out`.
+///
+/// Fails, as HKDF-Expand does, if `out` is longer than 255 hash outputs.
+pub(super) fn labeled_expand<D: Digest>(
+    prk: &Hkdf<D>,
+    suite_id: &[u8],
+    label: &[u8],
+    info: &[u8],
+    out: &mut [u8],
+) -> Result<(), hkdf::Error> {
+    // Every length Expand accepts, at most 255 * 64 bytes, fits in the two
+    // bytes of I2OSP(L, 2). The labelled info is public, and short but for an
+    // exporter context, so one allocation holds it.
+    let len = u16::try_from(out.len()).map_err(|_| hkdf::Error::InvalidLength)?;
+    let labeled_info = [&len.to_be_bytes()[..], VERSION, suite_id, label, info].concat();
+    prk.expand(&labeled_info, out)
+}
 
 /// A key encapsulation mechanism (RFC 9180 section 7.1): Diffie-Hellman over
 /// one of the crate's [`ecdh`](crate::ecdh) curves, with a KDF of its own
@@ -62,37 +118,6 @@ impl Kdf {
             Kdf::HkdfSha256 => 32,
             Kdf::HkdfSha384 => 48,
             Kdf::HkdfSha512 => 64,
-        }
-    }
-
-    /// `LabeledExtract` with this KDF's hash.
-    pub(super) fn labeled_extract(
-        self,
-        suite_id: &[u8],
-        salt: &[u8],
-        label: &[u8],
-        ikm: &[u8],
-    ) -> Secret {
-        match self {
-            Kdf::HkdfSha256 => kdf::labeled_extract::<Sha256>(suite_id, salt, label, ikm),
-            Kdf::HkdfSha384 => kdf::labeled_extract::<Sha384>(suite_id, salt, label, ikm),
-            Kdf::HkdfSha512 => kdf::labeled_extract::<Sha512>(suite_id, salt, label, ikm),
-        }
-    }
-
-    /// `LabeledExpand` with this KDF's hash, filling `out`.
-    pub(super) fn labeled_expand(
-        self,
-        suite_id: &[u8],
-        prk: &[u8],
-        label: &[u8],
-        info: &[u8],
-        out: &mut [u8],
-    ) -> Result<(), OutputTooLong> {
-        match self {
-            Kdf::HkdfSha256 => kdf::labeled_expand::<Sha256>(suite_id, prk, label, info, out),
-            Kdf::HkdfSha384 => kdf::labeled_expand::<Sha384>(suite_id, prk, label, info, out),
-            Kdf::HkdfSha512 => kdf::labeled_expand::<Sha512>(suite_id, prk, label, info, out),
         }
     }
 }

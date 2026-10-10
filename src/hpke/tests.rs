@@ -11,9 +11,8 @@ use crate::digest::hex;
 use crate::sha2::Sha256;
 use crate::sha3;
 
-/// The bytes of a hex string, which may be broken over lines. Shared with the
-/// tests of the KDF.
-pub(super) fn unhex(s: &str) -> Vec<u8> {
+/// The bytes of a hex string, which may be broken over lines.
+fn unhex(s: &str) -> Vec<u8> {
     let s: String = s.split_whitespace().collect();
     (0..s.len())
         .step_by(2)
@@ -24,8 +23,8 @@ pub(super) fn unhex(s: &str) -> Vec<u8> {
 /// `len` bytes derived from `label` and `i`: SHA-256(`label` || `i` || `j`)
 /// for `j` = 0, 1, ..., each counter as four big-endian bytes, cut to length.
 /// Simple enough to reproduce in any language, which is how the values from
-/// Go in these tests and in those of the KDF were made.
-pub(super) fn stream(label: &[u8], i: u32, len: usize) -> Vec<u8> {
+/// Go in these tests were made.
+fn stream(label: &[u8], i: u32, len: usize) -> Vec<u8> {
     let mut out = Vec::with_capacity(len + 32);
     for j in 0u32.. {
         if out.len() >= len {
