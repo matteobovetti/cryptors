@@ -20,8 +20,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.95
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.95
           components: rustfmt
       - run: cargo fmt --all -- --check
 
@@ -31,9 +32,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: jlumbroso/free-disk-space@main
-      - uses: dtolnay/rust-toolchain@1.95
+      - uses: dtolnay/rust-toolchain@master
         with:
           components: clippy
+          toolchain: 1.95
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get install -y protobuf-compiler
       - run: cargo clippy --all -- -D warnings
