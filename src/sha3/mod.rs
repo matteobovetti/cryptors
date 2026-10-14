@@ -226,9 +226,12 @@ mod digest;
 mod scalar;
 #[cfg(target_arch = "x86_64")]
 mod x86;
+mod xof;
 
 pub use digest::{
     sha3_224, sha3_224_hex, sha3_224_many, sha3_256, sha3_256_hex, sha3_256_many, sha3_384,
     sha3_384_hex, sha3_384_many, sha3_512, sha3_512_hex, sha3_512_many, shake128, shake128_hex,
     shake128_many, shake256, shake256_hex, shake256_many,
 };
+
+pub(crate) use xof::{Shake128, Shake256};

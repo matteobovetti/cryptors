@@ -34,7 +34,7 @@ const SUFFIX_SHA3: u8 = 0b0000_0110;
 
 /// Domain-separation suffix for SHAKE128/256 (FIPS 202 Section 6.2): the four
 /// suffix bits `1111` followed by the sponge padding's leading `1` bit.
-const SUFFIX_SHAKE: u8 = 0b0001_1111;
+pub(super) const SUFFIX_SHAKE: u8 = 0b0001_1111;
 
 /// Bytes absorbed per permutation, for each function FIPS 202 defines. Rate
 /// plus capacity is always the full 1600-bit state, so a smaller rate keeps
@@ -44,8 +44,8 @@ const RATE_224: usize = 144;
 const RATE_256: usize = 136;
 const RATE_384: usize = 104;
 const RATE_512: usize = 72;
-const RATE_SHAKE128: usize = 168;
-const RATE_SHAKE256: usize = 136;
+pub(super) const RATE_SHAKE128: usize = 168;
+pub(super) const RATE_SHAKE256: usize = 136;
 
 /// The largest rate above, and so the size of one staged padding block.
 const MAX_RATE: usize = RATE_SHAKE128;
@@ -76,7 +76,7 @@ pub(super) fn has_bmi() -> bool {
 /// compiled for BMI1/BMI2. x86's real acceleration comes from the
 /// multi-buffer backends instead, via the `*_many` functions.
 #[inline]
-fn permute(state: &mut [u64; 25]) {
+pub(super) fn permute(state: &mut [u64; 25]) {
     #[cfg(target_arch = "aarch64")]
     if has_hw_sha3() {
         // SAFETY: has_hw_sha3() just confirmed the `sha3` feature is available.
