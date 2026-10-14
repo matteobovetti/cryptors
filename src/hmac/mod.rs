@@ -76,8 +76,8 @@
 //!   weaker, and a key longer than a block is hashed down to `L` bytes first,
 //!   so it is worth no more than one of `L` bytes. HMAC is fast by design,
 //!   which is the wrong property for a password: turn a password into a key
-//!   with a password-hashing construction such as PBKDF2, which is on the
-//!   crate's list and not yet here.
+//!   with a password-hashing construction such as PBKDF2
+//!   ([`pbkdf2`](crate::pbkdf2)).
 //! - **Key once, tag many.** [`Hmac::new`] hashes the two padded keys, which
 //!   is two runs of the compression function, and every tag after that starts
 //!   from the result. [`hmac()`] does both for each call.
