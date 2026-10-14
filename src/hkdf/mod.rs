@@ -83,7 +83,8 @@
 //!   16 bytes.
 //! - **HKDF does not stretch passwords.** It is fast on purpose and adds no
 //!   work factor, so a password run through it is as easy to guess as the
-//!   password itself. A password-based KDF such as PBKDF2 is for that.
+//!   password itself. A password-based KDF such as PBKDF2
+//!   ([`pbkdf2`](crate::pbkdf2)) is for that.
 //! - **MD5 and SHA-1 are there for older protocols.** Their collisions do not
 //!   break HMAC, which does not need collision resistance, but neither should
 //!   be chosen for a new design.
