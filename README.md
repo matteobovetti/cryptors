@@ -1,5 +1,43 @@
 # Cryptors
 
+## Index
+
+**General**
+
+- [Overview](#overview)
+- [Why everything in a single crate?](#why-everything-in-a-single-crate)
+- [Rust Versions Compatibility](#rust-versions-compatibility)
+- [Algorithm](#algorithm)
+- [Hardware acceleration](#hardware-acceleration)
+- [Module layout](#module-layout)
+- [Example](#example)
+
+**Algorithms**
+
+- [AES](#aes)
+- [DES](#des)
+- [ECDH](#ecdh)
+- [ECDSA](#ecdsa)
+- [Ed25519](#ed25519)
+- [HKDF](#hkdf)
+- [HMAC](#hmac)
+- [HPKE](#hpke)
+- [MD5](#md5)
+- [ML-DSA](#ml-dsa)
+- [ML-KEM](#ml-kem)
+- [PBKDF2](#pbkdf2)
+- [Rand](#rand)
+- [RC4](#rc4)
+- [RSA](#rsa)
+- [SHA-1](#sha-1)
+- [SHA-256](#sha-256)
+- [SHA-3](#sha-3)
+- [SHA-512](#sha-512)
+
+**Project**
+
+- [Contributing](#contributing)
+
 ## Overview
 
 Cryptors is all-in-one cryptographic crate written in pure Rust.
@@ -30,12 +68,12 @@ This library supports the following algorithms and packages:
 | HMAC | [FIPS 198-1](https://csrc.nist.gov/pubs/fips/198-1/final) and [RFC 2104](https://www.rfc-editor.org/info/rfc2104): Keyed-Hash Message Authentication Code, over MD5, SHA-1 and the six SHA-2 functions | Implemented |
 | HPKE | [RFC 9180](https://www.rfc-editor.org/info/rfc9180): Hybrid Public Key Encryption over DHKEM(P-256, P-384, P-521, X25519), HKDF and AES-GCM | Implemented |
 | MD5 | [RFC 1321](https://www.rfc-editor.org/info/rfc1321): The MD5 Message-Digest Algorithm | Implemented |
-| ML-DSA | FIPS 204: post-quantum ML-DSA signature scheme | Planned |
-| ML-KEM | FIPS 203: quantum-resistant key encapsulation method | Planned |
-| PBKDF2 | RFC 8018: Password-Based Key Derivation Function 2 | Planned |
-| Rand | Cryptographically secure random number generator | Planned |
-| RC4 | Rivest Cipher 4 stream cipher | Planned |
-| RSA | PKCS #1 / RFC 8017: RSA encryption | Planned |
+| ML-DSA | [FIPS 204](https://csrc.nist.gov/pubs/fips/204/final): Module-Lattice-Based Digital Signature Algorithm (ML-DSA-44, ML-DSA-65 and ML-DSA-87), hedged and deterministic, with contexts, pre-hash and external μ | Implemented |
+| ML-KEM | [FIPS 203](https://csrc.nist.gov/pubs/fips/203/final): Module-Lattice-Based Key-Encapsulation Mechanism (ML-KEM-512, ML-KEM-768 and ML-KEM-1024), with implicit rejection | Implemented |
+| PBKDF2 | [RFC 8018](https://www.rfc-editor.org/info/rfc8018): Password-Based Key Derivation Function 2 (PKCS #5 v2.1), with HMAC over any hash of the crate that implements `Digest` | Implemented |
+| Rand | Cryptographically secure random number generator: the operating system's (`getrandom(2)`, `arc4random_buf(3)` or `/dev/urandom`), as an `io::Read`, with random bytes, random text and uniform numbers below a bound | Implemented |
+| RC4 | Rivest Cipher 4, the stream cipher of Schneier's *Applied Cryptography* (ARC4, ARCFOUR), with the vectors of [RFC 6229](https://www.rfc-editor.org/info/rfc6229); broken, kept for legacy data | Implemented |
+| RSA | [RFC 8017](https://www.rfc-editor.org/info/rfc8017): PKCS #1 v2.2, RSA encryption (OAEP and PKCS #1 v1.5) and signatures (PSS and PKCS #1 v1.5), with keys of 1,024 to 16,384 bits that are generated or built from their numbers | Implemented |
 | SHA-1 | [RFC 3174](https://www.rfc-editor.org/info/rfc3174): US Secure Hash Algorithm 1 | Implemented |
 | SHA-256 | [FIPS 180-4](https://csrc.nist.gov/pubs/fips/180-4/upd1/final): SHA-224 and SHA-256 | Implemented |
 | SHA-3 | FIPS 202: SHA-3 and SHAKE extendable output functions | Implemented |
@@ -47,111 +85,68 @@ Status is one of Implemented, In progress or Planned.
 
 ## Hardware acceleration
 
-Modern CPUs implement several of these primitives directly in silicon, and the difference is not marginal —
-a single instruction can replace dozens of arithmetic operations. Cryptors targets **aarch64** and **x86** so
-that, where the hardware offers a dedicated instruction, the crate uses it — and where it offers none, as for
-MD5, the crate takes the parallelism that is actually there instead.
+Cryptors targets **aarch64** and **x86_64**. Where the CPU has a dedicated instruction for a primitive, the crate uses
+it. Where it has none, the crate falls back to a portable scalar implementation, or to hashing several messages at once.
+Backends are picked at runtime; nothing needs to be configured.
 
 ### Dedicated instructions
 
-| Algorithm | Target | Feature | Instructions used |
-|-----------|--------|---------|-------------------|
-| AES | aarch64 | ARMv8 Cryptographic Extensions (`aes` / `FEAT_AES`, which Rust reports together with `FEAT_PMULL`) | `AESE`, `AESMC`, `AESD`, `AESIMC` |
+| Algorithm | Target | Feature | Instructions |
+|-----------|--------|---------|--------------|
+| AES | aarch64 | ARMv8 Cryptographic Extensions (`FEAT_AES`) | `AESE`, `AESMC`, `AESD`, `AESIMC` |
 | AES | x86_64 | AES-NI | `AESENC`, `AESENCLAST`, `AESDEC`, `AESDECLAST`, `AESIMC` |
-| AES-GCM's GHASH (HPKE) | aarch64 | ARMv8 Cryptographic Extensions (`aes` / `FEAT_PMULL`, which Rust reports together with `FEAT_AES`) | `PMULL`, `PMULL2` |
+| AES-GCM's GHASH (HPKE) | aarch64 | ARMv8 Cryptographic Extensions (`FEAT_PMULL`) | `PMULL`, `PMULL2` |
 | AES-GCM's GHASH (HPKE) | x86_64 | PCLMULQDQ, with SSSE3 | `PCLMULQDQ`, `PSHUFB` |
-| SHA-1 | aarch64 | ARMv8 Cryptographic Extensions (`sha2` / `FEAT_SHA1`) | `SHA1C`, `SHA1P`, `SHA1M`, `SHA1H`, `SHA1SU0`, `SHA1SU1` |
-| SHA-1 | x86_64 | SHA extensions (SHA-NI) | `SHA1RNDS4`, `SHA1NEXTE`, `SHA1MSG1`, `SHA1MSG2` |
-| SHA-224, SHA-256 | aarch64 | ARMv8 Cryptographic Extensions (`sha2` / `FEAT_SHA256`) | `SHA256H`, `SHA256H2`, `SHA256SU0`, `SHA256SU1` |
-| SHA-224, SHA-256 | x86_64 | SHA extensions (SHA-NI) | `SHA256RNDS2`, `SHA256MSG1`, `SHA256MSG2` |
-| SHA-384, SHA-512, SHA-512/224, SHA-512/256 | aarch64 | ARMv8.2 SHA-512 extension (`sha3` / `FEAT_SHA512`) | `SHA512H`, `SHA512H2`, `SHA512SU0`, `SHA512SU1` |
-| SHA-3 | aarch64 | ARMv8.2 SHA-3 extension (`sha3` / `FEAT_SHA3`) | `EOR3`, `RAX1`, `XAR`, `BCAX` |
+| SHA-1 | aarch64 | ARMv8 Cryptographic Extensions (`FEAT_SHA1`) | `SHA1C`, `SHA1P`, `SHA1M`, `SHA1H`, `SHA1SU0`, `SHA1SU1` |
+| SHA-1 | x86_64 | SHA-NI | `SHA1RNDS4`, `SHA1NEXTE`, `SHA1MSG1`, `SHA1MSG2` |
+| SHA-224, SHA-256 | aarch64 | ARMv8 Cryptographic Extensions (`FEAT_SHA256`) | `SHA256H`, `SHA256H2`, `SHA256SU0`, `SHA256SU1` |
+| SHA-224, SHA-256 | x86_64 | SHA-NI | `SHA256RNDS2`, `SHA256MSG1`, `SHA256MSG2` |
+| SHA-3 | aarch64 | ARMv8.2 SHA-3 extension (`FEAT_SHA3`) | `EOR3`, `RAX1`, `XAR`, `BCAX` |
+| SHA-384, SHA-512, SHA-512/224, SHA-512/256 | aarch64 | ARMv8.2 SHA-512 extension (`FEAT_SHA512`) | `SHA512H`, `SHA512H2`, `SHA512SU0`, `SHA512SU1` |
 
-SHA-3 has no x86 row, and that is not an omission: **SHA-NI covers SHA-1 and SHA-256 only.** No shipping x86
-CPU implements Keccak, so on x86 a single SHA-3 digest runs on the scalar backend. Where the CPU has BMI1 and
-BMI2, that is a second build of the same code using their general-purpose `andn` and `rorx`, which cut a
-round from 241 instructions to 181. The real parallelism has to come from somewhere else — see the next
-section.
+Notes per algorithm:
 
-The 64-bit SHA-2 functions have no x86 row either, for a different reason. SHA-NI does not include SHA-512. The
-SHA-512 instructions Intel has added since (`VSHA512RNDS2`, `VSHA512MSG1`, `VSHA512MSG2`) exist only in a few
-recent CPUs, and none of the machines this project is tested on has them. A backend that nothing here can execute
-is not worth shipping unverified, so on x86 SHA-384, SHA-512 and SHA-512/t run on the scalar backend, including
-its BMI1/BMI2 build.
-
-SHA-256 does have one x86 backend that is not SHA-NI. x86-64 CPUs with AVX2 but without SHA-NI, which means Intel's
-cores from Haswell until Ice Lake, get the design from Intel's white paper *Fast SHA-256 Implementations on Intel
-Architecture Processors*: AVX2 computes the message schedules of two blocks at once, one in each 128-bit half of a
-register, with the round constants already added, while the rounds stay in general-purpose registers, using BMI2's
-`rorx` and BMI1's `andn`.
-
-The four ARMv8.2 instructions are an unusually good fit. Keccak's round is almost entirely XOR, rotate and
-and-not, and each instruction collapses a whole pattern of them: `EOR3` is a three-way XOR, `RAX1` is
-`a ^ rotl(b, 1)`, `XAR` fuses an XOR with a rotate, and `BCAX` is all three operations of the chi step at once.
-Together they take a round from roughly 155 operations to 66.
-
-AES is the opposite case from SHA-3: both architectures have instructions for it, and each one does most or all of
-a round of the cipher. On x86, `AESENC` is SubBytes, ShiftRows, MixColumns and AddRoundKey in a single instruction.
-On Arm, `AESE` is all of them but MixColumns, which is `AESMC`. A block takes 10, 12 or 14 rounds, so that many
-instructions on x86 and about twice as many on Arm, against the sixteen table lookups per round of the scalar
-backend. The key expansion uses the instructions too, for its S-box, so that on these backends no byte that depends
-on the key or the data is ever used as a table index. The scalar backend cannot say the same, see
-the Security part of [AES](#aes). The wider forms of the x86 instruction (VAES), which run two or four blocks at once, are
-not used: they only help code that has many blocks in hand at once, which a cipher called one block at a time does
-not.
-
-DES is the case with nothing to accelerate. No instruction in the x86 or Arm cryptographic extensions implements it, and
-SIMD does not help with a block either: the sixteen rounds of a block are one chain, each round waiting on the one
-before it. What does run well on a vector unit is DES in "bitslice" form, which encrypts as many blocks side by side as
-a register has bits; it needs an interface that takes many blocks at once, and `BlockCipher` takes one. So DES and TDEA
-have no row in the tables above and run on their one scalar implementation everywhere. It folds `E` and `P` into the
-rounds (two rotations and eight lookups in tables of 64 words), does `IP` and its inverse as five exchanges of bit pairs
-with no table, and does TDEA's three stages with a single `IP` and a single inverse. See the Benchmarking part of
-[DES](#des) for what is left on the table.
-
-ECDH is the case where the hardware offers nothing and no clever layout of the work changes that. No x86 or Arm
-extension has an instruction for elliptic curve arithmetic, and the work is a long chain of multiplications of numbers
-of 256 to 521 bits, each waiting on the one before it. What the CPU does offer is a multiplier with a 128-bit result,
-which Rust reaches through `u128`, so ECDH has one portable implementation and no row in the tables above. The x86-64
-build uses plain `mulq`: the `mulx` and `adcx`/`adox` instructions of BMI2 and ADX, which the fastest x86 big-number code
-uses, are not in the x86-64 baseline, and a backend that used them behind a run-time check is not written. See the
-Benchmarking part of [ECDH](#ecdh) for what that costs where it can be measured.
-
-ECDSA is built on the same arithmetic as ECDH, with the order of the curve as the modulus where ECDH has the prime, and
-has the same answer: one portable implementation and no row in the tables above. The one place it meets a primitive
-that has hardware is the hash. The generator of the per-message secret number is an HMAC_DRBG, and it hashes with SHA-512
-in a randomized signature and with the `Digest` it is given in a deterministic one, so the SHA-256 and SHA-512 backends of
-the tables above are the ones it runs on where the CPU has them. See the Benchmarking part of [ECDSA](#ecdsa).
-
-Ed25519 is the same case again, on the same field as X25519, which the two share (`src/ec/fe25519.rs`): one portable
-implementation, five limbs of 51 bits and `u128` products, and no row in the tables above. Its hash is SHA-512, and that is where it meets hardware: on aarch64 with
-FEAT_SHA512 the hashing of a signature runs on the instructions, which makes it a small part of the time (about 0.4 µs of
-10). See the Benchmarking part of [Ed25519](#ed25519).
-
-HPKE has its curves from ECDH, its KDF from HKDF and HMAC on SHA-2, and its cipher from AES, and adds one thing that
-hardware does: the GHASH of AES-GCM, a multiplication in GF(2^128) for every 16 bytes, which is exactly what carry-less
-multiply instructions compute, `PMULL` on Arm and `PCLMULQDQ` on x86. A product of two blocks is four of them, and the
-backends multiply sixteen blocks by the powers `H^16` down to `H` of the key before they reduce the sum once, so that
-the multiplications of one block never wait on a reduction. In software the same multiplication is many integer
-multiplications of masked operands (the `ctmul64` design of BearSSL), as the usual tables of multiples of the key would
-be looked up at positions given by the data. The instructions make GHASH 23 times faster here, and sealing ten times.
-See the Benchmarking part of [HPKE](#hpke).
+- **AES**: each instruction does most or all of a cipher round, and the key expansion uses them too, so no secret byte
+  is ever a table index. The scalar backend cannot say that, see [AES](#aes). The wider VAES forms are not used, because
+  a cipher called one block at a time cannot fill them.
+- **DES, TDEA**: no instruction exists, and the sixteen rounds of a block form a single dependency chain, so there is
+  one scalar implementation everywhere. See [DES](#des).
+- **RC4**: no instruction exists, and each step of the generator reads two positions that the step before it may have
+  swapped, so the steps are one dependency chain and there is one scalar implementation everywhere. See [RC4](#rc4).
+- **ECDH, ECDSA, Ed25519**: no instruction exists for elliptic curve arithmetic either. They share one portable
+  implementation built on `u128` multiplications; x86_64 uses plain `mulq`, not BMI2/ADX. They still benefit from
+  hardware through their hash: ECDSA runs HMAC_DRBG on the SHA-256 and SHA-512 backends above, and Ed25519 hashes with
+  SHA-512. See [ECDH](#ecdh), [ECDSA](#ecdsa) and [Ed25519](#ed25519).
+- **ML-DSA**: no instruction exists for lattice arithmetic either, so the transform and the products are one portable
+  implementation in safe Rust, which the compiler turns into NEON instructions in places on aarch64. Much of the time goes
+  into SHAKE, which runs on the SHA-3 backends above (`FEAT_SHA3` on aarch64). See [ML-DSA](#ml-dsa).
+- **ML-KEM**: no instruction exists for lattice arithmetic either, so the transform and the products are one portable
+  implementation in safe Rust on `i16` coefficients, which the compiler turns into NEON instructions in places on
+  aarch64. A good part of the time goes into SHAKE and SHA-3, which run on the SHA-3 backends above (`FEAT_SHA3` on
+  aarch64). See [ML-KEM](#ml-kem).
+- **HKDF, HMAC, PBKDF2**: no instruction exists for them either; they run on the hash's own backend, whichever the
+  CPU has from the table above, through the hash's incremental form. See [HKDF](#hkdf), [HMAC](#hmac) and
+  [PBKDF2](#pbkdf2).
+- **Rand**: no instruction is used, not even `RDRAND` or `RNDR`: the operating system's generator already mixes the
+  hardware's source with others, and a generator of the crate's own on top of it would share its state across a fork.
+  Nothing is selected at run time; the platform is chosen at compile time. See [Rand](#rand).
+- **HPKE**: gets its curves, KDF and cipher from the algorithms above, and adds hardware GHASH. Carry-less multiply
+  replaces the many integer multiplications of the software version, which makes GHASH 23 times faster here. See
+  [HPKE](#hpke).
+- **SHA-256**: x86_64 CPUs with AVX2 but without SHA-NI (Intel Haswell to Ice Lake) use a backend based on Intel's
+  *Fast SHA-256 Implementations on Intel Architecture Processors*, which computes the message schedule of two blocks at
+  once.
+- **SHA-3**: no x86 CPU implements Keccak, so one digest runs on the scalar backend (with a BMI1/BMI2 build where
+  available). On aarch64 the SHA-3 instructions each replace a whole pattern of XOR, rotate and and-not, taking a round
+  from about 155 operations to 66. Real x86 parallelism comes from the next section.
+- **SHA-384, SHA-512, SHA-512/t**: x86_64 uses the scalar backend. SHA-NI does not include SHA-512, and the newer
+  Intel SHA-512 instructions are in too few CPUs to test here, so no unverified backend is shipped.
 
 ### Multi-buffer SIMD, where no instruction exists
 
-Not every algorithm has silicon behind it on every target. **No shipping CPU implements MD5**, and no x86 CPU
-implements Keccak. The ARMv8 cryptographic extensions cover AES, PMULL, SHA-1, SHA-2, SHA-3, SM3 and SM4, and
-x86 offers AES-NI and SHA-NI; MD5 appears in neither list.
-
-Nor does ordinary SIMD help *within* one message, for either algorithm. MD5 has no message schedule to expand
-in parallel, and its 64 steps form a single dependency chain in which every step needs the result of the one
-before it. SHA-3's problem is shape rather than serialization: its 25-lane state and 5-wide rows map badly onto
-4-lane registers, and the shuffling needed to line them up costs more than the parallelism returns — which is
-why the Keccak team's own reference code ships no single-message AVX2 variant either. In both cases there is
-nothing useful to do four at a time.
-
-What is parallel is hashing several independent messages. Each SIMD lane holds the same state word — or, for
-SHA-3, the same state lane — of a *different* message, and one ordinary pass advances every digest at once:
+No shipping CPU implements MD5, and no x86 CPU implements Keccak. Ordinary SIMD does not help within one message
+either: MD5 is a single dependency chain, and SHA-3's 25-lane state maps badly onto 4-lane registers. What is parallel
+is hashing several independent messages, with each SIMD lane holding the same state word of a different message:
 
 | Algorithm | Target | Feature | Lanes |
 |-----------|--------|---------|-------|
@@ -160,70 +155,43 @@ SHA-3, the same state lane — of a *different* message, and one ordinary pass a
 | MD5 | x86_64 | SSE2 (baseline) | 4 |
 | SHA-3 | x86_64 | AVX2 | 4 |
 | SHA-3 | x86_64 | SSE2 (baseline) | 2 |
-| SHA-3 | aarch64 | `sha3` / FEAT_SHA3 | 2 |
+| SHA-3 | aarch64 | `FEAT_SHA3` | 2 |
 
-That is a different shape of API, so it is a different function. `Md5::digest` and `sha3::sha3_256` hash one
-message; `Md5::digest_many` and `sha3::sha3_256_many` take a slice of messages and return their digests. Each
-fills the widest backend the CPU supports, then steps down through the narrower ones with whatever is left
-over, so a batch of 15 messages is not thrown back onto the scalar path by a granularity cliff. Messages need
-not be the same length: all lanes advance together for as long as every one of them still has a block left, and
-each then leaves the batch at its own final block.
+This has its own API: `Md5::digest_many` and `sha3::sha3_256_many` take a slice of messages. They use the widest
+backend available, then narrower ones for the remainder, and the messages may differ in length.
 
-The aarch64 MD5 widths are not just register widths. Four lanes alone leave the vector units idle — MD5's
-serial chain has nothing to issue while each multi-cycle instruction completes, worth only ~1.7x scalar. The 8-
-and 16-lane versions interleave two and four independent lane groups instruction by instruction, each filling
-the others' latency, for 3.2x and 4.8x at no extra arithmetic.
-
-SHA-3 on aarch64 is the one case where both kinds of acceleration apply at once. The SHA-3 extension's
-instructions are 128-bit, operating on two 64-bit lanes, and rho's rotation amount depends only on *which*
-state lane is being rotated, never on the message — so both halves of every register always want the same
-rotation. The same routine therefore serves two purposes: hashing one message, it broadcasts each state lane
-into both halves and discards the second (the win is purely the fused instructions); hashing two, it gets the
-fused instructions *and* twice the width out of identical code.
+On aarch64, 4 MD5 lanes leave the vector units idle (about 1.7x scalar), so the 8- and 16-lane versions interleave two
+and four lane groups to reach 3.2x and 4.8x. SHA-3 on aarch64 gets both kinds of acceleration: one message uses the
+fused instructions on half a register, two messages use the whole register.
 
 ### Rules
 
-Three rules govern how all of this is done, so that acceleration never costs correctness or portability:
+1. **A portable scalar implementation always exists.** It is optimized and tested against the specification's vectors
+   in its own right.
+2. **Backend selection is automatic, at runtime.** Accelerated code is only entered after the CPU feature is confirmed,
+   so a binary built on one machine stays correct on another. Features in the target baseline are checked at compile
+   time at no cost.
+3. **Every backend is differential-tested against the scalar one**, byte for byte, across lengths around every block
+   and padding boundary. Multi-buffer backends are also tested on batches of different lengths, AES on all three key
+   sizes (round keys included), and GHASH on lengths around its groups of sixteen blocks.
 
-1. **A portable scalar implementation always exists**, and it is the one the crate falls back to. It is not a
-   second-class path: it is fully optimized (unrolled rounds, compile-time constants) and known-answer tested
-   against the specification's own vectors in its own right.
-2. **Backend selection is automatic, at runtime.** Nothing needs to be configured and no feature flag has to be
-   enabled. The accelerated code is only ever entered after the relevant CPU feature has been confirmed present,
-   so a binary built on one machine stays correct on another. Where a feature is part of the target baseline
-   (`sha2` on `aarch64-apple-darwin`, for instance) the check folds away at compile time and costs nothing.
-3. **Every backend is differential-tested against the scalar reference** — byte-for-byte, across input lengths
-   that straddle every block and padding boundary, for the multi-buffer backends across batches whose
-   messages differ in length, so that lanes run out of blocks at different times, for AES across keys of
-   all three sizes, comparing the round keys as well as the blocks, and for GHASH across lengths around its groups
-   of sixteen blocks and from a running value that is not zero. A backend that disagreed with
-   the specification would fail the test suite, not silently produce wrong digests.
+Most of the crate's `unsafe` lives in the intrinsics backends, and is kept narrow: every backend takes whole blocks or
+fixed-size arrays assembled by safe code, so each load and store is in bounds by construction. The only obligation left
+is the one the dispatcher has already met, that the CPU feature is present.
 
-Because the vector instructions are intrinsics, these backends are where nearly all of the crate's `unsafe` lives.
-Its scope is kept deliberately narrow:
+Three other uses exist:
 
-- The single-message backends split the input into whole blocks (`chunks_exact`, `as_chunks`), so no length
-  precondition can be violated by a caller.
-- The multi-buffer backends receive fixed-size arrays, assembled by safe scalar code, so every vector load and store
-  is in bounds by construction.
-- The AES backends take their block and their round keys as fixed-size arrays, so each 16-byte load and store is in
-  bounds by construction.
-- The GHASH backends take whole blocks and the powers of the key as fixed-size arrays, which safe code has split and
-  padded, so each 16-byte load is in bounds by construction too.
+- An empty inline `asm!` block in SHA-256's aarch64 scalar and `FEAT_SHA256` backends. It emits no instruction and only
+  stops the compiler from reordering the arithmetic into a slower order (`src/sha2/sha256/scalar.rs`,
+  `src/sha2/sha256/aarch64.rs`).
+- A volatile write that zeroes secrets on drop (AES and DES round keys, the RC4 state, ECDH/ECDSA/Ed25519/RSA private keys, ECDH shared
+  secrets, HMAC key states, HPKE and AES-GCM secrets), which the compiler would otherwise delete as a dead store
+  (`src/aes/schedule.rs`, `src/des/schedule.rs`, `src/wipe.rs`). `src/wipe.rs` wipes aligned buffers in 16-byte words.
 
-In every case the only obligation left is the one the dispatcher has already discharged: that the CPU feature is
-available.
+- The declaration of the system's random generator (`getrandom` or `arc4random_buf`, from the C library the standard
+  library already links) and one call to it, with the buffer's pointer and length (`src/rand/sys.rs`).
 
-There are two other uses. One is an empty block of inline assembly in SHA-256's two aarch64 backends, scalar and
-FEAT_SHA256. It emits no instruction, touches no memory, and only stops the compiler from rearranging equivalent
-arithmetic into a slower order (`src/sha2/sha256/scalar.rs` and `src/sha2/sha256/aarch64.rs`). The other is the
-volatile write that overwrites an AES or DES cipher's round keys, an ECDH or ECDSA private key or ECDH shared secret,
-an Ed25519 signing key, the hash states of an HMAC key, or a secret of HPKE or of its AES-GCM, with zeros when it is
-dropped, which the compiler would otherwise delete as a store nobody reads (`src/aes/schedule.rs`,
-`src/des/schedule.rs` and, for the others, `src/wipe.rs`). For the states of HMAC, which are a few hundred bytes and
-wiped twice for every tag, `src/wipe.rs` views the bytes as 16-byte words where they are aligned for it
-(`align_to_mut`), so that a wipe is one store per 16 bytes instead of one per byte. Outside their tests, none of ECDH,
-ECDSA, Ed25519 and HMAC has intrinsics or anything else that is `unsafe`, and neither does HPKE outside the GHASH
+ECDH, ECDSA, Ed25519, HMAC and RSA have no other `unsafe` outside their tests, and neither does HPKE outside its GHASH
 backends.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -271,6 +239,34 @@ cryptors
 │   └── Error
 ├── md5
 │   └── Md5
+├── mldsa                            post-quantum signatures: generic over the parameter set, as ecdsa is over the curve
+│   ├── PrivateKey, PublicKey,       a key and a signature of two parameter sets cannot be mixed
+│   │   Signature
+│   ├── MlDsa44, MlDsa65, MlDsa87    the parameter sets, which implement the sealed trait `Parameters`
+│   ├── PreHash                      the hash functions that HashML-DSA can sign a digest of
+│   └── Error, MAX_CONTEXT_LEN, SEED_LEN
+├── mlkem                            post-quantum key encapsulation: generic over the parameter set, as mldsa is
+│   ├── DecapsulationKey,            keys, a ciphertext and a secret of two parameter sets cannot be mixed
+│   │   EncapsulationKey,
+│   │   Ciphertext, SharedSecret
+│   ├── MlKem512, MlKem768,          the parameter sets, which implement the sealed trait `Parameters`
+│   │   MlKem1024
+│   └── Error, SEED_LEN, SHARED_SECRET_LEN
+├── pbkdf2                           password-based key derivation: one function, generic over the hash
+│   ├── derive                       fills a buffer with the key for a password, a salt and an iteration count
+│   └── Error
+├── rand                             the operating system's random number generator
+│   ├── Reader                       as an `io::Read`: what the keys of the other modules take as their randomness
+│   ├── fill, text                   random bytes into a buffer, and a random string for a token
+│   └── below                        a uniform number below a bound, from any reader
+├── rc4                              a stream cipher: neither a hash nor a block cipher, so it has its own type
+│   ├── Rc4                          built from a key, then XORs data with the keystream, however it is cut into calls
+│   └── Error
+├── rsa                              public-key encryption and signatures: neither a hash nor a cipher, so it has its own types
+│   ├── PublicKey, PrivateKey        built from numbers or generated; a method for each scheme, the hash a type parameter
+│   ├── SaltLength                   the salt of a PSS signature
+│   ├── Pkcs1Hash                    the sealed trait of the eight hashes that a PKCS #1 v1.5 signature can name
+│   └── Error
 ├── sha1
 │   └── Sha1
 ├── sha2                             one module for the whole FIPS 180-4 family
@@ -290,93 +286,20 @@ The SHA-2 functions are all imported from `sha2`, as in `cryptors::sha2::Sha256`
 
 ## Example
 
-MD5, SHA-1 and the six SHA-2 functions (SHA-224, SHA-256, SHA-384, SHA-512, SHA-512/224 and SHA-512/256) are
-zero-sized types that implement one trait, `cryptors::Digest`. Bring it into scope to call them, or take
-`D: Digest` to be generic over the hash ([ECDSA](#ecdsa), [HKDF](#hkdf) and [HMAC](#hmac) do exactly that, and PBKDF2 will):
-
-```rust
-use cryptors::{Digest, md5::Md5, sha1::Sha1, sha2::{Sha256, Sha512}, sha3};
-
-// A fixed-output hash is a type, and `digest` returns a `[u8; N]` of the right size for it.
-let digest: [u8; 32] = Sha256::digest(b"abc");
-assert_eq!(digest.len(), Sha256::OUTPUT_LEN);
-assert_eq!(
-    Sha256::hex_digest(b"abc"),
-    "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-);
-
-// They share the `Digest` trait, so code can be generic over the hash.
-fn hash_len<D: Digest>() -> usize {
-    D::digest(b"abc").as_ref().len()
-}
-assert_eq!(hash_len::<Md5>(), 16);
-assert_eq!(hash_len::<Sha1>(), 20);
-assert_eq!(hash_len::<Sha512>(), 64);
-
-// SHA-3 is a set of functions in its own module.
-assert_eq!(sha3::sha3_256(b"abc").len(), 32);
-```
-
-Each hash provides `digest`, which returns a `[u8; N]`, plus the constants `BLOCK_LEN` and `OUTPUT_LEN`. `hex_digest`
-and `digest_many` come with the trait; MD5 overrides `digest_many` with its SIMD multi-buffer implementation. The
-dispatch is static, so a generic call compiles to the same code as a direct one. SHA-3 is not on the trait yet.
-
-The AES and DES ciphers are not hashes and do not implement `Digest`. They implement `BlockCipher`, a trait of the same
-shape for keyed permutations of fixed-size blocks: a cipher is built from a key with `new`, which runs the key schedule
-once, and then transforms blocks with `encrypt_block` and `decrypt_block`. The block and the key are types of the
-cipher, so the 16-byte blocks of AES and the 8-byte blocks of DES fit the same code. See [AES](#aes) and [DES](#des).
-
-Key agreement is neither of those. ECDH has no digest and no block, so its keys are types of their own: a
-`PrivateKey<C>` and a `PublicKey<C>`, generic over the curve `C` (`P256`, `P384`, `P521` or `X25519`, which implement
-the sealed trait `Curve`), and a `SharedSecret<C>` as the result of an exchange. Because the curve is a type, a private
-key of one curve and a public key of another do not compile together. See [ECDH](#ecdh).
-
-Signatures are not either. ECDSA signs a digest, but it needs the hash for more than that (the choice of the hash is the
-caller's, and the generator of the per-message secret number is built on it), so the hash is a type parameter:
-`key.sign::<Sha256, _>(&mut rng, message)` takes any `D: Digest`, and `public.verify::<Sha256>(message, &signature)` has
-to name the same one. The keys and the `Signature<C>` are generic over the curve, as in ECDH. See [ECDSA](#ecdsa).
-
-Ed25519 is a signature scheme too, but its curve and its hash are fixed by the standard, so nothing in it is generic: a
-`SigningKey` signs and a `VerifyingKey` verifies, with one method for each of the three schemes of RFC 8032 (`sign`,
-`sign_ctx`, `sign_prehashed` and their `verify` counterparts), and a `Signature` is 64 bytes. See [Ed25519](#ed25519).
-
-Message authentication is built on a hash without being one. `Hmac<D>` takes any `D: Digest` and, like a cipher, is
-built from a key with `new`, which hashes the padded key once; `mac` then gives the tag of a message, and `verify`
-checks one without stopping at the first wrong byte. Inside the crate, the hashes can also take a message in pieces,
-which is what lets HMAC start every tag from the state it computed from the key, and hash a message from the caller's
-memory without copying it. See [HMAC](#hmac).
-
-Key derivation takes the hash as a type parameter of the type itself. HKDF is HMAC with a hash, and the hash is the one
-choice there is to make, so an `Hkdf<D>` is generic over any `D: Digest`: `Hkdf::<Sha256>::extract(salt, secret)` holds
-the pseudorandom key, and `expand(info, &mut key)` fills a buffer with a key for one purpose. See [HKDF](#hkdf).
-
-Encryption to a public key is a protocol over all of these. HPKE's suite is a value of three parts, a KEM on one of ECDH's
-curves, an HKDF on one of the SHA-2 hashes and an AEAD on AES, chosen at run time because a protocol negotiates it by
-identifiers; a sender's `setup_sender` gives a `Sender` that seals messages, and the recipient's `setup_recipient` a
-`Recipient` that opens them. See [HPKE](#hpke).
+Runnable examples for every algorithm are in the `examples/` directory: `cargo run --release --example <name>`.
 
 ## AES
 
-AES, specified in [FIPS 197](https://csrc.nist.gov/pubs/fips/197/final), is a block cipher: a permutation of 128-bit
-blocks chosen by a key, together with the permutation that undoes it under the same key. NIST standardised it in 2001
-as the successor to DES, from the Rijndael design of Joan Daemen and Vincent Rijmen, and it is the cipher behind most
-encryption in use today: TLS, disk and file encryption, Wi-Fi. It is built from rounds of a substitution, a row
-shuffle, a column mix and a key addition, and it is not a hash, so it does not implement `Digest`. It implements
-`BlockCipher`, which has the same shape (associated lengths and array types, static dispatch) but holds a key. The
-cipher modes on the list above will be generic over it, just as [HMAC](#hmac) is over `Digest`.
-
-FIPS 197 defines three variants:
+AES ([FIPS 197](https://csrc.nist.gov/pubs/fips/197/final)) is a block cipher: a keyed permutation of 128-bit blocks.
+The crate provides the FIPS 197 cipher only, one block at a time; modes of operation (CBC, CTR, GCM, ...) are not
+included yet. It implements `BlockCipher` rather than `Digest`: the same shape (associated lengths and array types,
+static dispatch), but it holds a key. Future cipher modes will be generic over it, as [HMAC](#hmac) is over `Digest`.
 
 | Cipher | Key | Block | Rounds |
 |--------|-----|-------|--------|
-| AES-128 | 128 bits (16 bytes) | 128 bits (16 bytes) | 10 |
-| AES-192 | 192 bits (24 bytes) | 128 bits (16 bytes) | 12 |
-| AES-256 | 256 bits (32 bytes) | 128 bits (16 bytes) | 14 |
-
-The block is always 128 bits; the key size only changes the number of rounds and the key expansion. A longer key is
-not a longer version of a shorter one: it is a different permutation. What the crate provides is the cipher of FIPS
-197 itself, one block at a time. A mode of operation (CBC, CTR, GCM, ...) is what turns it into encryption of a
-message, and that is a separate item on the list above.
+| AES-128 | 16 bytes | 16 bytes | 10 |
+| AES-192 | 24 bytes | 16 bytes | 12 |
+| AES-256 | 32 bytes | 16 bytes | 14 |
 
 ### Usage
 
@@ -393,7 +316,7 @@ let plaintext = [
     0x31, 0x31, 0x98, 0xa2, 0xe0, 0x37, 0x07, 0x34,
 ];
 
-// Building the cipher runs the key schedule once; every block then reuses it.
+// `new` runs the key schedule once; every block reuses it.
 let cipher = Aes128::new(&key);
 let ciphertext: [u8; 16] = cipher.encrypt_block(&plaintext);
 assert_eq!(
@@ -405,7 +328,7 @@ assert_eq!(
 );
 assert_eq!(cipher.decrypt_block(&ciphertext), plaintext);
 
-// The key sizes are separate types with the same interface, so code can be generic over the cipher.
+// Each key size is its own type with the same interface.
 fn encrypt_zeros<C: BlockCipher>(key: &C::Key) -> C::Block {
     C::new(key).encrypt_block(&C::Block::default())
 }
@@ -414,33 +337,20 @@ assert_eq!(encrypt_zeros::<Aes256>(&[0; 32]).len(), Aes256::BLOCK_LEN);
 
 ### Security
 
-AES is not broken. The best known attack on the full cipher, a biclique attack from 2011, finds the key only about 3 to
-5 times faster than trying every key, which changes nothing in practice. Related-key attacks on AES-192 and AES-256 are
-faster than that, but need encryptions under keys that differ in ways the attacker chooses; do not derive one key by
-changing a few bits of another.
+AES is not broken: the best attack on the full cipher (biclique, 2011) is only 3-5x faster than brute force.
+Related-key attacks on AES-192/256 exist, so never derive one key by flipping bits of another.
 
-Three things to know when using it:
-
-- **It is a block cipher, not an encryption scheme.** `encrypt_block` encrypts 16 bytes. Calling it on every block of a
-  message independently (ECB) is not safe, because equal plaintext blocks give equal ciphertext blocks and the structure
-  of the message shows through. Nor is anything authenticated: a ciphertext that has been altered decrypts to something
-  else, without any error. Use a mode of operation, and an authenticated one for anything that crosses a network;
-  this crate does not have them yet.
-- **The hardware backends do not index memory by secrets. The scalar backend does.** With AES-NI or the Arm crypto
-  extensions, neither the key nor the data is ever used as a memory address or a branch condition, even during the key
-  expansion, and the instructions themselves are built to take the same time for every input; no CPU is known to do
-  otherwise, though Arm documents that guarantee only while its data-independent-timing mode (DIT) is on, and this
-  crate does not turn it on. The scalar backend looks up table entries at positions given by the state, and how long
-  a lookup takes depends on whether the CPU has that part of the table cached. That has recovered AES keys in
-  practice, both from a program on the same core (Osvik, Shamir and Tromer 2006) and, with many more samples, from the
-  response times of a server across a network (Bernstein 2005). It is a real difference from the SHA-2 functions, whose
-  work and memory accesses never depend on the message. The scalar backend is what runs on any CPU without AES
-  instructions (on Arm, that includes one with the AES instructions but without PMULL, since Rust reports `aes` only
-  with both), and on any target other than aarch64 and x86-64.
-- **Keys stay in memory for as long as the cipher does.** The round keys are overwritten with zeros when the cipher is
-  dropped, and `Debug` does not print them. That is best effort: copies the compiler made on the stack while a key was
-  expanded or a block processed are not reachable from here, and neither is the copy that moving a cipher (into a
-  `Box` or a `Vec`, say) can leave behind where it was. Where that matters, build the cipher where it will stay.
+- **Block cipher, not an encryption scheme.** ECB (each block encrypted on its own) leaks equal blocks and
+  authenticates nothing. Use an (authenticated) mode of operation (none here yet).
+- **Hardware backends are constant-time; the scalar backend is not.**
+  - AES-NI and Arm crypto extensions: no key or data byte is ever a memory address or branch condition, key expansion
+    included. Arm guarantees data-independent timing only with DIT enabled, which this crate does not set.
+  - Scalar: state-indexed table lookups leak through cache timing. Such attacks have recovered AES keys from the same
+    core (Osvik, Shamir and Tromer 2006) and over a network (Bernstein 2005).
+  - Scalar runs on CPUs without AES instructions, on Arm CPUs with AES but without PMULL (Rust reports `aes` only with
+    both), and on every target other than aarch64 and x86-64.
+- **Key wiping is best effort.** Round keys are zeroed on drop and hidden from `Debug`, but compiler stack copies and
+  the copy a move leaves behind (e.g. into a `Box` or `Vec`) are not wiped. Build the cipher where it will stay.
 
 ### Testing
 
@@ -448,19 +358,16 @@ Three things to know when using it:
 cargo test aes     # known-answer vectors and differential tests against the scalar reference
 ```
 
-The known-answer tests include the examples of FIPS 197 (Appendix B, and the one NIST publishes for each key size,
-which the 2001 edition printed as Appendix C) and the ECB examples of NIST SP 800-38A, for all three key sizes and in
-both directions. Those have only a handful of keys, so two further sets come from OpenSSL and Go's standard library,
-which agree with each other: a thousand encryptions in a row, each on the previous ciphertext, for each key size, so
-that one wrong table entry cannot go unnoticed; and a thousand different keys for each size, which is what exercises
-the key expansion. Every test that uses a vector is run twice, through the public types and through the scalar backend
-alone, which on a machine with AES instructions the public types do not use. On any CPU, `cargo test` also runs every
-backend that CPU supports against the scalar one (the `matches_scalar_backend` test), comparing the round keys of both
-directions and the blocks, and `--nocapture` names each backend it checked.
+Covered for all three key sizes, in both directions:
 
-Unlike SHA-NI, AES-NI can be executed on a Mac: both Rosetta 2 and Docker's `linux/amd64` emulation support it. The
-x86-64 backend therefore passes these tests as it is, with the emulator supplying the instructions, where the SHA-NI
-backend could only be checked against a model of them written for the purpose. It has still not run on an x86 CPU.
+- FIPS 197 examples (Appendix B, plus NIST's per-key-size example, Appendix C in the 2001 edition).
+- NIST SP 800-38A ECB examples.
+- OpenSSL and Go (which agree): per key size, 1,000 chained encryptions and 1,000 different keys (key expansion).
+
+Every vector runs twice: through the public types and through the scalar backend alone. `matches_scalar_backend`
+compares every backend the CPU supports against scalar (round keys for both directions, and blocks); `--nocapture`
+lists the backends checked. The x86-64 AES-NI backend passes under Rosetta 2 and Docker `linux/amd64` emulation, but
+has not run on a real x86 CPU.
 
 ### Benchmarking
 
@@ -472,11 +379,10 @@ cd bench/aescmp && go test -v                        # Go's crypto/aes as shippe
 cd bench/aescmp && go test -tags purego -v           # Go's portable code, the counterpart of our scalar backend
 ```
 
-Both sides encrypt (or decrypt) 64 MiB in place, as independent 16-byte blocks with one call per block: ECB with no mode
-on top. Each takes the best of five passes after a warm-up pass. They start from the same bytes and print the first block
-after the passes; all four implementations print the same, which is a cross-check of its own.
+Workload: 64 MiB in place as independent 16-byte blocks, one call per block (ECB, no mode); best of five passes after
+a warm-up. All implementations print the same first block as a cross-check.
 
-On an Apple M1 Pro, against Go's `crypto` package on the same machine (medians of five interleaved runs, in MiB/s):
+Apple M1 Pro, MiB/s (medians of five interleaved runs):
 
 | Workload | cryptors scalar | Go portable (`purego`) | cryptors accelerated | Go stdlib |
 |----------|-----------------|------------------------|----------------------|-----------|
@@ -487,63 +393,34 @@ On an Apple M1 Pro, against Go's `crypto` package on the same machine (medians o
 | AES-256 encrypt | 306 | 235 | **8053** (FEAT_AES) | 1845 |
 | AES-256 decrypt | 306 | 234 | **7378** (FEAT_AES) | 1833 |
 
-The ciphers differ in rounds (10, 12 and 14), and the speed falls with them. Decrypting runs at about the speed of
-encrypting, as the equivalent inverse cipher gives their rounds the same shape: identical to within 2% in the scalar
-columns, and within 9%, in either direction, in the accelerated one.
-
-Each cryptors column has a Go counterpart, and the two accelerated columns need more care than the others:
-
-- **Scalar vs Go portable.** Go's portable code is what it runs on every platform without assembly. Both use lookup
-  tables, and our scalar backend is 1.30–1.37x faster. The first version of ours, with one table and a rotate after each
-  lookup, to save memory, was no faster than Go's (323 against 327 MiB/s for AES-128). Go keeps four tables, one per
-  row, and so does ours now. That takes twelve rotates out of every round, and the rotates sit on the path each round
-  waits on; it measured 37% faster, for 6 KiB more tables (8 KiB in all, for both directions).
-- **Accelerated vs Go stdlib.** Both run the same instructions, so the 4.0–5.7x between them is not AES. `cipher.Block`
-  takes one block per call, through an interface, and at 16 bytes a call the call is most of Go's time. Go's own bulk
-  path is CTR mode, which hands the whole buffer to the assembly; it reaches 6917, 6225 and 5724 MiB/s for the three key
-  sizes, even though it also builds the counters and XORs the keystream into the data (`TestThroughputBulk`, with no
-  Rust counterpart). Against that, cryptors encrypts 1.4–1.7x faster, on an ECB loop that does less work per block.
-  The loop gets there because the aarch64 backend is compiled into the caller's loop on this target (the instructions
-  are in its baseline), which keeps the round keys in registers and lets the CPU overlap independent blocks. A mode in
-  which each block waits for the one before it, like CBC encryption, cannot overlap them and will be slower; that is
-  not measured here.
-
-The instructions buy 24–27x over scalar.
-
-No x86 figures are given yet, for the same reason as the SHA functions: nothing here can time real x86 hardware, and
-Rosetta 2 translates AES-NI to Arm instructions, so its timings say nothing about an x86 CPU. The manual `Benchmarks`
-workflow (`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners, and the throughput test
-times the scalar backend there as well.
+- Speed falls with the round count (10, 12, 14).
+- The ECB loop lets independent blocks overlap. Chained modes such as CBC encryption cannot, and will be slower (not
+  measured).
+- No x86 figures yet: Rosetta 2 timings say nothing about x86 hardware. The manual `Benchmarks` workflow
+  (`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners, scalar backend included.
 
 ## DES
 
-DES, specified in [FIPS 46-3](https://csrc.nist.gov/pubs/fips/46-3/final), is a block cipher: a permutation of 64-bit
-blocks chosen by a 56-bit key, together with the permutation that undoes it under the same key. It became the US federal
-standard in July 1977 and stayed it until NIST withdrew it in favour of AES. It is a Feistel network of 16 rounds whose only nonlinear
-step is eight small substitution tables, and, like AES, it is not a hash, so it implements `BlockCipher`. FIPS 46-3
-also defines TDEA, the Triple Data Encryption Algorithm, or Triple DES: three DES operations in a row under three keys.
+DES ([FIPS 46-3](https://csrc.nist.gov/pubs/fips/46-3/final)) is a 64-bit block cipher: a 16-round Feistel network with
+a 56-bit key. FIPS 46-3 also defines TDEA (Triple DES): three DES operations under three keys. Both implement
+`BlockCipher`, one block at a time; modes of operation (CBC, CTR, ...) are not provided yet.
 
-**DES is broken and TDEA is obsolete.** They are here for reading data that already exists and for talking to systems
-that have not moved on, not for protecting anything new. Use [AES](#aes).
+**DES is broken and TDEA is obsolete.** Use them only to read existing data or talk to legacy systems. For anything new,
+use [AES](#aes).
 
 | Cipher | Type | Key | Block | Rounds |
 |--------|------|-----|-------|--------|
 | DES | `Des` | 64 bits (8 bytes), of which 56 are used | 64 bits (8 bytes) | 16 |
 | TDEA | `TripleDes` | 3 x 64 bits (24 bytes) | 64 bits (8 bytes) | 3 x 16 |
 
-TDEA **encrypts** under `K1`, **decrypts** under `K2` and **encrypts** under `K3`. Decrypting in the middle is what
-keeps it compatible with DES: if the three keys are equal, the first two steps cancel. FIPS 46-3 allows three keying
-options for the bundle `(K1, K2, K3)`, and `TripleDes` takes the bundle as one 24-byte key, so each option is a kind of
-key:
+TDEA encrypts under `K1`, decrypts under `K2`, encrypts under `K3`. `TripleDes` takes `K1 || K2 || K3` as one 24-byte
+key, so the FIPS 46-3 keying options are just kinds of key:
 
 | Keying option | Bundle | Remarks |
 |---------------|--------|---------|
 | 1 | `K1`, `K2` and `K3` independent | the intended use |
 | 2 | `K1` and `K2` independent, `K3 = K1` | "two-key" TDEA |
 | 3 | `K1 = K2 = K3` | single DES, with a longer key |
-
-What the crate provides is the cipher of FIPS 46-3 itself, one block at a time. A mode of operation (CBC, CTR, ...) is
-what turns it into encryption of a message, and that is a separate item on the list above.
 
 ### Usage
 
@@ -565,7 +442,7 @@ let bundle: [u8; 24] = [key, key, key].concat().try_into().unwrap();
 let triple = TripleDes::new(&bundle);
 assert_eq!(triple.encrypt_block(&plaintext), ciphertext);
 
-// The block is 8 bytes here, not 16, and code generic over the cipher does not mind.
+// Generic code works with the 8-byte block too.
 fn encrypt_zeros<C: BlockCipher>(key: &C::Key) -> C::Block {
     C::new(key).encrypt_block(&C::Block::default())
 }
@@ -574,44 +451,23 @@ assert_eq!(encrypt_zeros::<TripleDes>(&[0; 24]).len(), TripleDes::BLOCK_LEN);
 
 ### Security
 
-**DES has a 56-bit key, and trying every one is within reach.** In 1998 the Electronic Frontier Foundation's DES
-Cracker, built for under US$250,000, found a key in 56 hours, and in January 1999 it did so in 22 hours and 15 minutes
-with the help of distributed.net. A machine of 120 FPGAs that cost under US$10,000 (COPACOBANA, 2006) was shown to
-take under nine days on average, and the service crack.sh advertises the whole key space in about 26 hours. The attacks
-on the 16 rounds themselves, differential (Biham and Shamir, 2^47 chosen plaintexts) and linear (Matsui, 2^43 known
-plaintexts), beat exhaustive search on paper but need more data than anyone has; the short key is what matters.
-
-**TDEA has a larger key and still falls short.** A meet-in-the-middle attack brings three-key TDEA down to about 112
-bits, and NIST rates two-key TDEA at no more than 80. The bigger problem is the 64-bit block: two ciphertext blocks are
-equal by chance after about 2^32 blocks (32 GiB) under one key, and in the usual modes that tells an attacker the XOR of
-the two plaintexts. The Sweet32 attack (2016, CVE-2016-2183) used this against 3DES in TLS and recovered a secret cookie
-from 610 GB of captured traffic. NIST withdrew FIPS 46-3 on 19 May 2005. Its TDEA specification, SP 800-67, capped a key
-bundle at 2^20 blocks (8 MiB) in 2017 and was withdrawn on 1 January 2024, which "signifies that TDEA is no longer an
-approved block cipher"; decrypting data that was protected earlier is still allowed. SP 800-131A (Revision 2, 2019) had
-already disallowed two-key TDEA encryption and, after 2023, three-key TDEA encryption.
-
-Four things to know when using it:
-
-- **It is a block cipher, not an encryption scheme.** `encrypt_block` encrypts 8 bytes. Calling it on every block of a
-  message independently (ECB) is not safe, because equal plaintext blocks give equal ciphertext blocks and the structure
-  of the message shows through. Nor is anything authenticated: a ciphertext that has been altered decrypts to something
-  else, without any error. With a block this short, the mode and the amount of data under one key matter more than they
-  do for AES. This crate does not have modes yet.
-- **The table lookups are indexed by secrets.** No CPU this crate targets has a DES instruction, so there is no backend
-  without them: the rounds look up table entries at positions given by the state, and how long a lookup takes depends on
-  whether the CPU has that part of the table cached. That is the same kind of leak as the AES scalar backend, see the
-  Security part of [AES](#aes), though the tables here are small (2 KiB in all), which makes the signal coarser, not
-  absent. The key schedule only shifts and masks. It is a real difference from the SHA-2 functions, whose work and memory
-  accesses never depend on the message.
-- **Keys stay in memory for as long as the cipher does.** The round keys are overwritten with zeros when the cipher is
-  dropped, and `Debug` does not print them. That is best effort: copies the compiler made on the stack while a key was
-  expanded or a block processed are not reachable from here, and neither is the copy that moving a cipher (into a `Box`
-  or a `Vec`, say) can leave behind where it was. Where that matters, build the cipher where it will stay.
-- **The last bit of every key byte is ignored, and every key is accepted.** The standard sets those eight bits to give
-  each byte an odd number of ones and the algorithm does not use them, so two keys that differ only in them are the same
-  key; nothing checks the parity. DES also has four weak keys, which are their own inverse, and twelve semi-weak ones, in
-  pairs that undo each other. They are accepted like any other, and a random key is one of them with a probability near
-  2^-52. Keying option 3 of TDEA is single DES with a longer key, and `TripleDes` builds it if it is given such a bundle.
+- **DES: the 56-bit key can be brute-forced.** The EFF DES Cracker took 56 hours (1998), and 22 hours with
+  distributed.net (1999); crack.sh advertises the whole key space in about 26 hours.
+- **TDEA is weaker than its key size.** Meet-in-the-middle brings three-key TDEA to about 112 bits; NIST rates two-key
+  TDEA at no more than 80.
+- **TDEA's 64-bit block is too short.** Collisions appear after about 2^32 blocks (32 GiB) under one key and leak
+  plaintext XORs (Sweet32, CVE-2016-2183).
+- **Status.** NIST withdrew FIPS 46-3 in 2005 and SP 800-67 (TDEA) on 1 January 2024. TDEA is no longer approved for
+  encryption; decrypting old data is still allowed.
+- **Block cipher, not an encryption scheme.** ECB (each block encrypted on its own) leaks message structure and
+  authenticates nothing. With an 8-byte block, the mode and the data volume per key matter even more than for AES.
+- **Not constant-time.** No targeted CPU has a DES instruction, so the only backend indexes lookup tables by secret
+  state, which can leak through cache timing as in AES's scalar backend (see [AES](#aes)). The 2 KiB tables give a
+  coarser signal, but still one. The key schedule only shifts and masks.
+- **Key wiping is best effort.** Round keys are zeroed on drop and hidden from `Debug`. Stack copies and copies left
+  behind by moves are not reachable; build the cipher where it will stay.
+- **Every key is accepted.** The low (parity) bit of each key byte is unused and not checked. The 4 weak and 12
+  semi-weak keys are accepted (a random key hits one with probability near 2^-52).
 
 ### Testing
 
@@ -619,21 +475,15 @@ Four things to know when using it:
 cargo test des::   # known-answer vectors, and a comparison with a literal implementation of the standard
 ```
 
-The known-answer tests include the ECB example of FIPS 81 (the text "Now is the time for all " under the key
-`0123456789abcdef`), the first entries of NIST's variable-plaintext and variable-key tests (the `TECBvartext` and
-`TECBvarkey` files of its validation program), and vectors for the three TDEA keying options. Those have only a
-handful of keys, so two further sets come from OpenSSL and Go's standard library, which agree with each other, for DES
-and for TDEA: a thousand encryptions in a row, each on the previous ciphertext, and a thousand different keys, which is
-what exercises the key schedule.
-
-DES has one implementation, so there is no backend to compare against. In its place, `matches_reference` checks the
-round keys and the blocks, in both directions, against a second DES written for the tests alone (`src/des/reference.rs`).
-That one is as slow and as literal as the text of FIPS 46-3: blocks are vectors of bits, every permutation is the
-standard's own table, and none of the shortcuts of the real one is taken. The real one never forms `IP`, `IP^-1` or `E`: they
-are folded into rotations, five exchanges of bit pairs and the lookup tables, which is why it needs a check that known
-answers alone do not give.
-`triple_des_is_three_des` checks the single-block TDEA path, which skips the permutations between its stages, against
-three DES operations in a row, for each keying option.
+- **Known answers:** the FIPS 81 ECB example, the first entries of NIST's `TECBvartext` and `TECBvarkey` tests, and
+  vectors for all three TDEA keying options.
+- **OpenSSL / Go sets** (they agree), for DES and TDEA: 1,000 chained encryptions, and 1,000 different keys to exercise
+  the key schedule.
+- **`matches_reference`:** with one implementation there is no backend to diff against, so round keys and blocks in
+  both directions are checked against a slow bit-by-bit DES that follows FIPS 46-3 literally (`src/des/reference.rs`).
+  The real code folds `IP`, `IP^-1` and `E` into rotations and tables, which known answers alone would not fully cover.
+- **`triple_des_is_three_des`:** the fused TDEA path (no permutations between stages) matches three DES calls, for each
+  keying option.
 
 ### Benchmarking
 
@@ -643,11 +493,10 @@ cargo test --release des:: -- --ignored --nocapture --test-threads=1
 cd bench/descmp && go test -v                        # Go's crypto/des, which has no assembly and so no purego run
 ```
 
-Both sides encrypt (or decrypt) 32 MiB in place, as independent 8-byte blocks with one call per block: ECB with no mode
-on top. Each takes the best of five passes after a warm-up pass. They start from the same bytes and print the first
-block after the passes; the two implementations print the same, which is a cross-check of its own.
+Both sides encrypt (or decrypt) 32 MiB in place as independent 8-byte blocks, one call per block (ECB, no mode); best
+of five passes after a warm-up. Both print the same first block as a cross-check.
 
-On an Apple M1 Pro, against Go's `crypto` package on the same machine (medians of five interleaved runs, in MiB/s):
+Apple M1 Pro, MiB/s (medians of five interleaved runs):
 
 | Workload | cryptors | Go stdlib |
 |----------|----------|-----------|
@@ -656,34 +505,21 @@ On an Apple M1 Pro, against Go's `crypto` package on the same machine (medians o
 | TDEA encrypt | **36.6** | 33.8 |
 | TDEA decrypt | **36.5** | 33.9 |
 
-Decrypting runs at the speed of encrypting, as the same rounds are used with the keys in the opposite order, and TDEA
-at a third of DES, as it is 48 rounds against 16. Skipping the four permutations between the stages of TDEA is worth
-1.22x: three separate DES operations in a row, on the same keys, run at 30.2 MiB/s against 36.9 (one run of three).
-
-The two are close because they are built the same way. Go's `crypto/des` also merges the S-boxes and `P` into tables of
-64 words, takes the six-bit groups out of two rotations of the half-block, and does its TDEA with one initial and one
-final permutation. Ours is 1.14x faster for DES and 1.08x for TDEA. Building a cipher is faster too, though not
-measured with the same care (one run of three, with one block encrypted): about 0.5 µs for DES and 1.7 µs for TDEA,
-against 0.9 and 2.3 µs.
-
-What limits both is the chain of rounds. Each round waits on the one before it, so a call that encrypts a single block
-leaves most of the CPU idle. An experiment that is not in the crate, running 2, 3, 4 and 8 independent blocks side by
-side through the same code, reached 181, 236, 278 and 332 MiB/s for DES (one run), 1.6x to 3.0x the figure above, with
-the same output. Getting there needs an interface that takes many blocks at once, which `BlockCipher` does not have, and
-modes in which the blocks are independent (ECB, CTR, decrypting CBC); CBC encryption, where each block waits for the one
-before it, would not gain.
-
-No x86 figures are given yet, for the same reason as the others: nothing here can time real x86 hardware. The manual
-`Benchmarks` workflow (`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
+- Decryption is as fast as encryption. TDEA runs at a third of DES speed (48 rounds against 16).
+- Fused TDEA (no permutations between stages) reaches 36.9 MiB/s, against 30.2 MiB/s for three separate DES calls (one
+  run of three).
+- Key setup: about 0.5 µs for DES and 1.7 µs for TDEA (one run of three).
+- Rounds form one dependency chain, so a single block leaves the CPU mostly idle. An out-of-crate experiment running 2,
+  3, 4 and 8 independent blocks side by side reached 181, 236, 278 and 332 MiB/s for DES (one run). That needs a
+  multi-block API (`BlockCipher` has none) and a mode with independent blocks (ECB, CTR, CBC decryption).
+- No x86 figures yet: nothing here can time real x86 hardware. The manual `Benchmarks` workflow
+  (`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
 
 ## ECDH
 
-ECDH, Elliptic Curve Diffie-Hellman, lets two parties who share no secret agree on one over a channel that anyone can
-read. Each makes a key pair, sends the public half to the other, and combines its own private half with the one it
-received; both arrive at the same bytes, and someone who saw only the public keys cannot. It is how TLS 1.3, among
-others, establishes the keys that the rest of a session is encrypted with. It is neither a hash nor a cipher, so it
-implements neither `Digest` nor `BlockCipher`: a key pair is a type of its own, generic over the curve, and the curve
-is one of four types that implement the sealed trait `Curve`.
+Elliptic Curve Diffie-Hellman: two parties exchange public keys over an open channel and each derives the same shared
+secret. It is neither a `Digest` nor a `BlockCipher`. Keys are generic over the curve, one of four types implementing
+the sealed trait `Curve`, so mixing keys of two curves is a compile error. P-224 is only in [ECDSA](#ecdsa).
 
 | Curve | Type | Private key | Public key | Shared secret | Defined in |
 |-------|------|-------------|------------|---------------|------------|
@@ -692,18 +528,9 @@ is one of four types that implement the sealed trait `Curve`.
 | NIST P-521 | `P521` | 66 bytes | 133 bytes | 66 bytes | the same |
 | Curve25519 | `X25519` | 32 bytes | 32 bytes | 32 bytes | [RFC 7748](https://www.rfc-editor.org/info/rfc7748) |
 
-On the NIST curves a public key is an uncompressed point, the byte `0x04` and the two coordinates (SEC 1, section 2.3.3),
-and the shared secret is the x-coordinate of the shared point (SEC 1, section 3.3.1; NIST SP 800-56A Rev. 3, section
-5.7.1.2). A key from the network is validated when it is turned into a `PublicKey`: coordinates below the prime, point
-on the curve, no point at infinity, no compressed form. X25519 takes any 32 bytes as a public key, as RFC 7748 asks, and
-the one thing it refuses is the all-zero secret that a peer's point of small order would force. P-224 is not here: the
-curves a Go program can use with `crypto/ecdh` are these four, and the general-purpose curve package on the list above is
-a separate item.
-
-The keys are generic over the curve, so a private key of one curve takes only a public key of the same curve and mixing
-them is a compile error, where a library that picks the curve at run time can only return an error. Key generation takes
-any `std::io::Read` as its source of randomness, because the standard library has no secure random source that is stable
-and the `Rand` item above is still planned.
+- **NIST curves**: a public key is an uncompressed point, `0x04` and both coordinates (SEC 1, 2.3.3). The shared secret
+  is the x-coordinate of the shared point (SEC 1, 3.3.1; NIST SP 800-56A Rev. 3, 5.7.1.2).
+- **X25519**: any 32 bytes are a public key (RFC 7748).
 
 ### Usage
 
@@ -714,7 +541,7 @@ fn unhex(s: &str) -> Vec<u8> {
     (0..s.len() / 2).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap()).collect()
 }
 
-// RFC 7748, section 6.1: Alice and Bob each make a key from 32 bytes...
+// RFC 7748, section 6.1.
 let alice = PrivateKey::<X25519>::from_bytes(&unhex(
     "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a",
 )).unwrap();
@@ -726,10 +553,9 @@ assert_eq!(
     unhex("8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a")
 );
 
-// ...send each other the public half, as bytes (this is where a bad key is refused)...
+// Public keys arrive as bytes; this is where a bad key is refused.
 let bobs_public = PublicKey::<X25519>::from_bytes(bob.public_key().as_bytes()).unwrap();
 
-// ...and both arrive at the same secret.
 let from_alice = alice.diffie_hellman(&bobs_public).unwrap();
 let from_bob = bob.diffie_hellman(alice.public_key()).unwrap();
 assert_eq!(from_alice, from_bob);
@@ -738,8 +564,7 @@ assert_eq!(
     unhex("4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742")
 );
 
-// The NIST curves work the same way. A vector from NIST's CAVS for P-256: a private key, the other side's
-// public key as it arrives on the wire (an uncompressed point), and the secret both get.
+// NIST curves work the same way (a NIST CAVS vector for P-256).
 let private = PrivateKey::<P256>::from_bytes(&unhex(
     "7d7dc5f71eb29ddaf80d6214632eeae03d9058af1fb6d22ed80badb62bc1a534",
 )).unwrap();
@@ -752,13 +577,13 @@ assert_eq!(
     unhex("46fc62106420ff012e54a434fbdd2d25ccc5852060561e68040dd7778997bd7b")
 );
 
-// A point that is not on the curve is refused when the key is built.
+// A point off the curve is refused when the key is built.
 let mut off_the_curve = peer.as_bytes().to_vec();
 off_the_curve[64] ^= 1;
 assert!(PublicKey::<P256>::from_bytes(&off_the_curve).is_err());
 ```
 
-Real keys come from `PrivateKey::generate`, given a source of secure random bytes of your own:
+Real keys come from `PrivateKey::generate`. `std` has no stable secure RNG, so it reads from any `std::io::Read`:
 
 ```rust
 use cryptors::ecdh::{P384, PrivateKey};
@@ -769,50 +594,29 @@ let key = PrivateKey::<P384>::generate(&mut rng)?;
 // Send key.public_key().as_bytes() to the other side.
 ```
 
-`examples/ecdh.rs` runs a complete exchange on each of the four curves, between two parties that each generate a key:
-`cargo run --release --example ecdh`.
+`examples/ecdh.rs` runs a full exchange on all four curves: `cargo run --release --example ecdh`.
 
 ### Security
 
-None of the four curves is broken. The best known attacks on the NIST curves take about the square root of the size of
-the group, which NIST rates (SP 800-57) at 128, 192 and 256 bits of security for P-256, P-384 and P-521. RFC 7748 puts
-Curve25519 "slightly under the standard 128-bit level". A large quantum computer would break all four, by Shor's
-algorithm, and a key exchange that has to outlast one needs a post-quantum scheme such as ML-KEM, which is also on the
-list above, alongside or instead.
+Security levels: 128, 192 and 256 bits for P-256, P-384 and P-521 (NIST SP 800-57); Curve25519 is "slightly under the
+standard 128-bit level" (RFC 7748). A large quantum computer breaks all four; long-lived secrecy needs a post-quantum
+scheme such as [ML-KEM](#ml-kem).
 
-Six things to know when using it:
-
-- **The shared secret is not a key.** It is one coordinate of a point, and both sides, and anyone who gets it from either
-  of them, see exactly the same bytes. Run it through a key derivation function, and include both public keys in what
-  that hashes, as RFC 7748 (section 6.1) describes and its section 7 explains the need for, before using any of it as a
-  key. [HKDF](#hkdf), `cryptors::hkdf`, is one.
-- **Nothing is authenticated.** ECDH gives two parties a secret in common; it does not say who they are. Someone between
-  them can play each against the other and end up with a secret shared with both, so a protocol has to bind the keys to
-  an identity (signatures, certificates, a pre-shared secret). Use a fresh key pair for each exchange where you can: a key
-  that is reused makes every exchange with it a target for an attack on that one key.
-- **A public key is validated, and that is the point.** On the NIST curves, a point that is not on the curve lets an
-  attacker who chooses it learn the private key a little at a time, one exchange after another (an invalid-curve attack).
-  `PublicKey::from_bytes` is where that is refused, so a `PublicKey` is always a valid one, and `diffie_hellman` needs no
-  further check. X25519 has no such attack on its `u` coordinate, but a few points have small order and force the secret
-  to all zeros; `diffie_hellman` returns `Error::LowOrderPoint` for them, which RFC 7748 allows.
-- **The randomness is the caller's.** `generate` is only as good as the reader it is given. A predictable one makes every
-  key it produced guessable.
-- **The arithmetic is written not to depend on secrets, and that is checked in one way only.** No branch condition or
-  memory address is derived from a private key: the scalar goes through a table lookup that reads every entry, a
-  conditional swap done with masks, and formulas that are complete, so they have no special cases to branch on. The
-  masks go through `core::hint::black_box`, because a compiler may turn a mask back into a jump, and `black_box` is a
-  request, not a guarantee. What backs the claim is the assembly `rustc` produced for `aarch64` and `x86_64`, which was
-  inspected: the conditional jumps in the code that handles a secret are loops over a public number of limbs, windows or
-  bits of the exponent that inverts a number, checks of public lengths, and two checks of a result (whether the shared
-  point is the point at infinity, which for a valid key it never is, and whether an X25519 secret is all zeros, which
-  the peer's point decides whatever our key is). That is one compiler's output for two targets, with no timing
-  measurement on real hardware behind it, and nothing protects against attacks that read power consumption or inject
-  faults.
-- **Keys stay in memory for as long as they exist.** A private key and a shared secret are overwritten with zeros when
-  dropped, and `Debug` does not print them. That is best effort: the working values of the arithmetic (numbers that depend
-  on a key, on the stack and in registers while it is in use) are not overwritten, and neither is the copy that moving a
-  key (into a `Box` or a `Vec`, say) can leave
-  behind where it was.
+- **The shared secret is not a key.** Run it through a KDF such as [HKDF](#hkdf), with both public keys in the input
+  (RFC 7748, sections 6.1 and 7).
+- **Nothing is authenticated.** Unless the protocol binds keys to identities (signatures, certificates, a pre-shared
+  secret), a man in the middle is possible. Prefer a fresh key pair per exchange.
+- **Public keys are validated.** `PublicKey::from_bytes` rejects coordinates not below the prime, points off the curve,
+  the point at infinity and compressed points (invalid-curve attacks), so a `PublicKey` is always valid. For X25519,
+  `diffie_hellman` returns `Error::LowOrderPoint` when a small-order point forces an all-zero secret.
+- **Randomness is the caller's.** `generate` is only as good as its reader.
+- **Constant-time by construction, checked only by reading assembly.** No branch or memory address depends on a private
+  key: full-table lookups, mask-based conditional swaps, complete formulas. Masks go through `core::hint::black_box`, a
+  request, not a guarantee. In the `rustc` output for `aarch64` and `x86_64`, the other conditional jumps depend only on
+  public values (limb, window and exponent-bit counts, lengths) or on two result checks (shared point at infinity,
+  all-zero X25519 secret). Not timed on real hardware; no protection against power analysis or fault injection.
+- **Zeroizing is best effort.** Private keys and shared secrets are zeroed on drop and hidden from `Debug`. Stack and
+  register intermediates are not, nor are copies left by moves (e.g. into a `Box` or `Vec`).
 
 ### Testing
 
@@ -820,32 +624,16 @@ Six things to know when using it:
 cargo test -- ecdh:: ec::   # known answers, Wycheproof, chained exchanges against OpenSSL, and the arithmetic against references
 ```
 
-The known-answer tests include the vectors of NIST's CAVS for the three curves (the ones Go's tests use) and those of
-RFC 7748: the function itself (section 5.2), including the thousand-step chain, and the exchange of section 6.1. The
-rest of the confidence comes from three other kinds of test:
+| Source | Coverage |
+|--------|----------|
+| Known answers | NIST CAVS vectors for the three NIST curves; RFC 7748 section 5.2 (including the 1,000-step chain) and the section 6.1 exchange |
+| Project Wycheproof | `ecdh_secp256r1_ecpoint_test.json`, its 384 and 521 counterparts, and `x25519_test.json`: 2,324 cases, all passed once; 273 kept (every invalid or acceptable NIST case, the notable X25519 public-key cases, the zero-secret case per NIST curve, samples of the rest) |
+| Chained exchanges | 16 rounds per curve of two derived keys exchanging, each seeded by the hash of the last; final values from OpenSSL, reproduced by `bench/ecdhcmp` |
+| Differential tests | The X25519 five-limb field and full ladder against the generic NIST field (limbs at their bounds included); the generator table against generic multiplication; curve constants against their defining relations |
+| API behaviour | `generate` redraws on zero, the order or too-large values and errors after 64 failed candidates; smallest/largest private keys and x = 0 are accepted; P-521 masks the seven unused top bits; reader failures are reported; `Debug` shows no secret; keys and secrets are wiped on drop |
 
-- **Project Wycheproof.** The four of its ECDH files that take points as raw bytes (`ecdh_secp256r1_ecpoint_test.json`,
-  the same for 384 and 521, and `x25519_test.json`) hold 2,324 cases for these curves: points that are not on the curve (the
-  invalid-curve attack), points of other curves, compressed and malformed encodings, the points of small order of
-  X25519, non-canonical encodings and points on its twist, private keys with unusual bit patterns, public keys that hit
-  an edge case such as a zero coordinate when doubled, shared secrets that are special cases, and a regression for a bug
-  that Go's own P-256 once had on amd64 (CVE-2017-8932). All of them were run once and passed. 273 are in the tests:
-  every NIST case that is invalid or only acceptable, every X25519 case whose public key is of small order, not reduced,
-  of a special form or small, the one with a zero secret on each NIST curve, and samples of the rest.
-- **Chained exchanges.** Rounds of two derived keys exchanging with each other, each round seeded by the hash of the
-  last, for 16 rounds on each curve: some hundreds of thousands of field multiplications per curve, so a wrong carry in
-  one of them changes everything after it. The final values come from OpenSSL, and `bench/ecdhcmp` recomputes them with Go's
-  `crypto/ecdh`; the three agree.
-- **Differential tests.** The five-limb field of X25519 is compared with the generic field of the NIST curves on
-  pseudo-random inputs and on limbs at the largest values its bounds allow, and a whole ladder is compared with the same
-  ladder on the generic field. The table of multiples of the generator is compared with the generic multiplication, and
-  the curve constants with the relations that define them (the generator is on the curve; the order times the generator
-  is the point at infinity).
-
-The tests also cover the other behaviour of the API: what `generate` does with a reader that gives a zero, the order or a
-too-big number (it draws again, and after 64 candidates in a row that are not keys it reports an error), that the
-smallest and largest private keys and the point with x = 0 are accepted, that P-521 masks the seven unused bits of its first byte, that a failing reader is
-reported, that `Debug` shows no secret, and that a key and a shared secret leave nothing behind after they are dropped.
+Wycheproof covers off-curve and wrong-curve points, malformed and compressed encodings, small-order and twist points,
+non-canonical encodings, edge-case keys and secrets, and the CVE-2017-8932 regression.
 
 ### Benchmarking
 
@@ -856,15 +644,11 @@ cd bench/ecdhcmp && go test -v                       # Go's crypto/ecdh as shipp
 cd bench/ecdhcmp && go test -tags purego -v          # Go's portable code, with no assembly
 ```
 
-Both sides time the four operations of one side of a handshake, on the same keys: building a private key from its bytes
-(which derives the public key: a multiplication of the generator), building a public key from its bytes (which checks
-that the point is on the curve), the exchange itself (a multiplication of the peer's point), and the three in a row.
-Each runs for about 50 ms to size a batch of about 100 ms, and the best of five batches is reported. Key generation
-itself is not timed, so the cost of the random source is on neither side. Both print the first 8 bytes of the shared
-secret, and all three runs print the same.
+Timed on the same keys: building a private key (derives the public key), building a public key (on-curve check), the
+exchange, and all three ("handshake"). Each runs ~50 ms to size a ~100 ms batch; best of five batches. Key generation
+is not timed. All runs print the same first 8 bytes of the shared secret.
 
-On an Apple M1 Pro, against Go 1.27.1's `crypto/ecdh` on the same machine (medians of five interleaved runs, in
-microseconds per operation, lower is better):
+Apple M1 Pro, Go 1.27.1, medians of five interleaved runs, µs per operation (lower is better):
 
 | Operation | cryptors | Go stdlib | Go portable (`purego`) |
 |-----------|----------|-----------|------------------------|
@@ -881,50 +665,23 @@ microseconds per operation, lower is better):
 | X25519 ecdh | **28.1** | 36.3 | 36.3 |
 | X25519 handshake | **56.5** | 72.6 | 72.6 |
 
-Building a public key takes 0.1 to 0.5 µs for the NIST curves here and 0.2 to 0.9 µs in Go, and nothing for X25519, which
-has nothing to check. Run-to-run spread was within about 1% in every cell, but the machine was not idle (load average
-2 to 4, a desktop), so the last digit means little.
+- Building a public key takes 0.1 to 0.5 µs on the NIST curves, and nothing for X25519.
+- Run-to-run spread was about 1% on a non-idle desktop (load average 2 to 4), so the last digit means little.
+- The first NIST key in a process builds that curve's generator table (excluded above): about 0.5 ms for P-256, 1.7 ms
+  for P-384, 4 ms for P-521, kept in 90, 200 and 420 KiB.
+- The X25519 field (`src/ec/fe25519.rs`) is shared with Ed25519.
+- Not done, possible NIST speedups: dedicated squaring, prime-specific reduction (P-521 needs no Montgomery step),
+  signed windows (half the table), an x86-64 BMI2/ADX backend.
 
-Per curve:
-
-- **X25519 is 29% faster than Go's.** Go's X25519 has assembly for amd64 only, so on this machine the two are portable
-  code against portable code, and both use five limbs of 51 bits. The first version of ours used the field of the
-  NIST curves, which does not know about the shape of `2^255 - 19`, and took 79.6 µs for an exchange, about 2.2x Go's at the time; the
-  field of its own took that to 30.6. That field is now shared with Ed25519 (`src/ec/fe25519.rs`), and takes the carries
-  of a product from its five columns at once rather than one after the other, which took it to 28.1: the three X25519
-  rows were measured again for that, before and after, each time with Go beside it (medians of five interleaved runs,
-  load average 3 to 7.5), and went from 31.4, 31.5 and 62.8 µs to the figures above while Go's stayed within 2%.
-- **P-256: level with Go's portable code on the exchange, 21% behind on building a key, and 2.7x behind its assembly.**
-  Go has assembly for P-256 on arm64 (and on amd64, ppc64le and s390x). Nothing in this crate competes with that, and the
-  `purego` column is the fair one: 113.3 against 110.4 µs for the exchange, 31.8 against 26.2 for building a key.
-- **P-384 and P-521: 18% and 7% behind Go on the exchange, level or ahead on building a key.** Go has no assembly for
-  them. Both are the same kind of code, Montgomery multiplication on 64-bit limbs, so the difference is in the
-  details. Two things that were measured and are not the cause: the `black_box` on the masks (removing it changes the NIST
-  curves by 1% or less, and by 6% in the generic field that X25519 started with), and loops that LLVM does not unroll in
-  the 6- and 9-limb multiplications (raising its unroll threshold so that it does makes P-384 and P-521 4–5% faster, and
-  P-256 not at all).
-  The first key of a curve in a process also builds the table of multiples of the generator, once: in a fresh process,
-  about 0.5 ms more for P-256, 1.7 ms for P-384 and 4 ms for P-521 (medians of seven; a busy machine took up to twice
-  that), kept afterwards (90, 200 and 420 KiB). The figures above leave that out.
-
-What would make the NIST curves faster, none of it done: a squaring that uses the symmetry of a product (about a fifth
-of the multiplications of a squaring), a reduction written for the shape of each prime (P-521's `2^521 - 1` reduces by
-shifts and additions, with no Montgomery step at all), signed windows (half the table), and, on x86-64, a backend for
-BMI2 and ADX behind a run-time check, which is what the fastest x86 big-number code relies on. Nothing here can run that
-one to see what it would gain.
-
-No x86 figures are given yet, for the same reason as the others: nothing here can time real x86 hardware, and Rosetta 2
-translates the instructions, so its timings say nothing about an x86 CPU. The manual `Benchmarks` workflow
+No x86 figures yet: Rosetta 2 timings say nothing about real x86 CPUs. The manual `Benchmarks` workflow
 (`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
 
 ## ECDSA
 
-ECDSA, the Elliptic Curve Digital Signature Algorithm, lets the holder of a private key sign a message so that anyone with
-the matching public key can check that the signature is of that message and was made by that holder, and nobody without the
-private key can make one. It is what signs most X.509 certificates, TLS handshakes and JSON Web Tokens (`ES256`, `ES384`,
-`ES512`). It is neither a hash nor a cipher, so it implements neither `Digest` nor `BlockCipher`: keys and signatures are
-types of their own, generic over the curve, and the curve is one of four types that implement the sealed trait `Curve`. The
-hash is a type parameter of the functions that sign and verify a message, because the choice of it is the caller's.
+ECDSA signs a message with a private key; anyone with the public key can verify it. It signs most X.509 certificates,
+TLS handshakes and JWTs (`ES256`, `ES384`, `ES512`). It is neither a `Digest` nor a `BlockCipher`: keys and signatures
+are their own types, generic over the curve (one of four types implementing the sealed trait `Curve`), and the hash is
+a type parameter of the sign and verify functions.
 
 | Curve | Type | Private key | Public key | Signature `r \|\| s` | Signature in DER | Security |
 |-------|------|-------------|------------|---------------------|------------------|----------|
@@ -933,23 +690,24 @@ hash is a type parameter of the functions that sign and verify a message, becaus
 | NIST P-384 | `P384` | 48 bytes | 97 bytes | 96 bytes | 8 to 104 bytes | 192 bits |
 | NIST P-521 | `P521` | 66 bytes | 133 bytes | 132 bytes | 8 to 139 bytes | 256 bits |
 
-The curves are defined in [NIST SP 800-186](https://csrc.nist.gov/pubs/sp/800/186/final) and
-[SEC 2](https://www.secg.org/sec2-v2.pdf), the algorithm in [FIPS 186-5](https://csrc.nist.gov/pubs/fips/186-5/final)
-(section 6), and the deterministic signature in [RFC 6979](https://www.rfc-editor.org/info/rfc6979). A public key is an
-uncompressed point ([SEC 1](https://www.secg.org/sec1-v2.pdf), section 2.3.3), as in ECDH, and is validated when it is
-turned into a `PublicKey`. A signature is written two ways: `r || s` with each number as long as a private key (the form
-of IEEE P1363, JSON Web Signature and COSE), and the ASN.1 DER `SEQUENCE { r INTEGER, s INTEGER }` of
-[RFC 3279](https://www.rfc-editor.org/info/rfc3279) (section 2.2.3) and SEC 1 (annex C.5), which X.509 and TLS carry.
-Reading DER is strict: one encoding of each pair of numbers is accepted and nothing else. P-224 is here, unlike in ECDH,
-because FIPS 186-5 includes it and Go's `crypto/ecdsa` supports it; it is the least secure of the four.
+Curves: [NIST SP 800-186](https://csrc.nist.gov/pubs/sp/800/186/final), [SEC 2](https://www.secg.org/sec2-v2.pdf).
+Algorithm: [FIPS 186-5](https://csrc.nist.gov/pubs/fips/186-5/final), section 6. Deterministic signatures:
+[RFC 6979](https://www.rfc-editor.org/info/rfc6979). P-224, the weakest of the four, is included (unlike in ECDH)
+because FIPS 186-5 includes it.
 
-A signature needs a secret number `k` for each message, and the private key follows from a repeated `k`, or from one that
-is partly predictable. There are two ways to get it, and both are here, each as a function of the message and of its
-digest: a **randomized** signature (`sign`, `sign_prehash`) takes random bytes from any `std::io::Read`, mixes them with the
-private key and the digest, and gives a different signature each time; a **deterministic** one (`sign_deterministic`,
-`sign_prehash_deterministic`) takes `k` from the key and the digest alone, as RFC 6979 does, and gives the same signature
-each time. The standard library has no secure random source that is stable and the `Rand` item above is still planned, so
-key generation and the randomized signature take a reader, as in ECDH.
+- **Public key**: an uncompressed point ([SEC 1](https://www.secg.org/sec1-v2.pdf), section 2.3.3), as in ECDH, validated
+  when turned into a `PublicKey`.
+- **Signature**: either `r || s`, each number as long as a private key (IEEE P1363, JWS, COSE), or DER
+  `SEQUENCE { r INTEGER, s INTEGER }` ([RFC 3279](https://www.rfc-editor.org/info/rfc3279) section 2.2.3, SEC 1 annex
+  C.5), as carried by X.509 and TLS. DER parsing is strict: only the one valid encoding is accepted.
+
+Each signature needs a secret nonce `k`. Both ways to get it are provided, each over a message or a digest. As in ECDH,
+key generation and randomized signing take a reader, since the standard library has no stable secure random source.
+
+| Kind | Functions | Nonce | Output |
+|------|-----------|-------|--------|
+| Randomized | `sign`, `sign_prehash` | random bytes from any `std::io::Read`, mixed with the key and digest | different each time |
+| Deterministic | `sign_deterministic`, `sign_prehash_deterministic` | from the key and digest alone (RFC 6979) | always the same |
 
 ### Usage
 
@@ -974,7 +732,7 @@ assert_eq!(
     ))
 );
 
-// The verifier has the public key and the signature as bytes (this is where a bad key or a bad encoding is refused)...
+// The verifier parses the public key and signature (bad keys and encodings are refused here)...
 let public = PublicKey::<P256>::from_bytes(key.public_key().as_bytes()).unwrap();
 let received = Signature::<P256>::from_der(&signature.to_der()).unwrap();
 
@@ -983,7 +741,7 @@ assert_eq!(public.verify::<Sha256>(b"sample", &received), Ok(()));
 assert_eq!(public.verify::<Sha256>(b"sampled", &received), Err(Error::VerificationFailed));
 ```
 
-Real keys come from `PrivateKey::generate`, and the randomized signature takes random bytes too, from a source of your own:
+Real keys come from `PrivateKey::generate`. Randomized signing also takes a random source:
 
 ```rust
 use cryptors::ecdsa::{P384, PrivateKey};
@@ -996,54 +754,48 @@ let signature = key.sign::<Sha384, _>(&mut rng, b"a message")?;
 // Send key.public_key().as_bytes(), the message and signature.to_der() to the other side.
 ```
 
-`examples/ecdsa.rs` runs a complete round on each of the four curves, with a randomized and a deterministic signature, a
-changed message and a changed signature: `cargo run --release --example ecdsa`.
+`examples/ecdsa.rs` runs a full round on all four curves (randomized and deterministic signatures, a changed message, a
+changed signature):
+
+```sh
+cargo run --release --example ecdsa
+```
 
 ### Security
 
-None of the four curves is broken. The best known attacks take about the square root of the size of the group, which NIST
-rates (SP 800-57) at 112, 128, 192 and 256 bits of security for P-224, P-256, P-384 and P-521. A large quantum computer
-would break all four, by Shor's algorithm, and a signature that has to stay trustworthy after one exists needs a
-post-quantum scheme such as ML-DSA, which is also on the list above, alongside or instead.
+None of the four curves is broken; the security levels in the table are NIST's (SP 800-57). A large quantum computer
+would break all four (Shor's algorithm); signatures that must outlive one need a post-quantum scheme such as
+[ML-DSA](#ml-dsa).
 
-Seven things to know when using it:
+- **Everything rests on `k`.** `d = (s * k - e) / r`: whoever learns `k` has the private key. Two signatures sharing a
+  `k`, or many whose `k` share a few bits (lattice attack), leak it. Neither mode below protects against an attacker
+  who can skip instructions.
+  - Randomized signing mixes the random bytes, key and digest in an HMAC_DRBG (draft-irtf-cfrg-det-sigs-with-noise
+    section 4) that always uses SHA-512, since a digest does not say which hash made it. A bad reader costs only the
+    randomization, leaving a signature as strong as a deterministic one.
+  - Deterministic signing needs no reader but loses fault protection: a faulted recomputation of the same signature
+    yields two results sharing a `k`.
+- **The randomness is the caller's.** `generate` is only as good as its reader; a predictable one makes keys guessable.
+  For signing, the reader must be secret and from a CSPRNG, but need not be perfect.
+- **Pick the hash on purpose.** FIPS 186-5 section 6.1.1 approves SHA-2 and SHA-3, and a hash weaker than the curve
+  "shall not be used": SHA-256 for P-224 and P-256, SHA-384 for P-384, SHA-512 for P-521. The crate accepts any
+  `Digest`, SHA-1 and MD5 included, and the signature is then only as strong as that hash. The verifier must use the
+  signer's hash. SHA-3 is not a `Digest` yet; use the `_prehash` functions.
+- **Signatures are malleable.** Anyone can turn a valid `(r, s)` into a valid `(r, n - s)`. This is not a forgery, but
+  do not identify a signature by its bytes (transaction IDs, cache keys).
+- **Use a key only for signing** (FIPS 186-5 sections 6 and 6.2). An ECDH key, a distinct type, cannot be passed here.
+- **Constant-time by construction, checked only by inspection.** No branch or memory address depends on the private
+  key or `k`: `k * G` uses a table lookup that reads every entry, `k^-1` is a fixed-exponent power, and formulas are
+  complete with mask-based selection, as in ECDH. In `rustc`'s aarch64 and x86_64 assembly, signing branches only on:
+  - loops over public counts (limbs, windows, bytes, bits of a fixed exponent) and checks of public lengths;
+  - checks that infallible results did not fail;
+  - redrawing a rejected `k` candidate (depends on the rejected candidates, not the accepted one);
+  - the `r` or `s` = 0 test, true with probability about `1/n` (2^-224 to 2^-521).
 
-- **Everything rests on `k`.** From a signature, `d = (s * k - e) / r`, so whoever learns `k` has the private key, two
-  signatures that share a `k` give it away, and so do many whose `k` have a few bits in common (a lattice attack). The
-  randomized signature mixes the random bytes with the private key and the digest in an HMAC_DRBG, following
-  draft-irtf-cfrg-det-sigs-with-noise (section 4) except that the generator always runs on SHA-512, where the draft uses the
-  hash of the signature, which a digest does not say. A reader that repeats or is predictable costs the randomization and
-  not the key: the result is then as strong as a deterministic signature. The deterministic one needs no reader at all.
-  What it gives up is protection against faults: someone who can make one of two computations of the same signature fail
-  gets two results that share a `k`, which the randomized form prevents. Neither protects against an attacker who can skip
-  instructions.
-- **The randomness is the caller's.** `generate` is only as good as the reader it is given, and a predictable one makes
-  every key it produced guessable. For a signature the reader has to be secret and made by a cryptographically secure
-  generator, but it does not have to be perfect.
-- **Pick the hash on purpose.** FIPS 186-5 approves the SHA-2 and SHA-3 families, recommends one as strong as the curve,
-  and says one that is weaker "shall not be used" (section 6.1.1): SHA-256 for P-224 and P-256, SHA-384 for P-384, SHA-512
-  for P-521. This crate does not stop you from naming another `Digest`, SHA-1 and MD5 included, and the signature is then
-  as weak as that choice. The verifier has to use the same hash as the signer. SHA-3 is not a `Digest` yet, and its output
-  goes through the `_prehash` functions.
-- **A signature is not unique.** If `(r, s)` is a signature then so is `(r, n - s)`, and anyone can make the second from the
-  first without the key. Both are signatures of the same message, so it is not a forgery, but a program that identifies a
-  signature by its bytes (a transaction identifier, a cache key) must not assume there is only one.
-- **A key is for signing and for nothing else.** FIPS 186-5 (sections 6 and 6.2) says so. The keys of this module are types of
-  their own, so an ECDH key cannot be handed to it by accident.
-- **The arithmetic is written not to depend on secrets, and that is checked in one way only.** No branch condition or memory
-  address is derived from the private key or from `k`: `k * G` goes through a table lookup that reads every entry, the
-  inverse of `k` is a power with a fixed exponent, and the formulas are complete and the choices are made by masks, as in
-  ECDH. The assembly `rustc` produced for `aarch64` and `x86_64` was inspected, and the conditional jumps in the code that
-  signs are loops over public numbers of limbs, windows, bytes or bits of a fixed exponent; checks of public lengths; checks
-  that a result which cannot fail did not; the choice to draw another candidate for `k`, which depends on the candidates
-  that were refused and not on the one that was accepted; and the test of whether `r` or `s` is zero, true with a
-  probability of about `1/n`, between 2^-224 and 2^-521 depending on the curve. That is one compiler's output for two targets, with no timing measurement on real hardware
-  behind it, and nothing protects against attacks that read power consumption or inject faults. Verifying handles no
-  secret, and its time depends on its inputs.
-- **Keys stay in memory for as long as they exist.** A private key is overwritten with zeros when dropped, and `Debug` does
-  not print it. That is best effort: the working values of the arithmetic (numbers that depend on a key, on the stack and in
-  registers while it is in use) are not overwritten, and neither is the copy that moving a key (into a `Box` or a `Vec`,
-  say) can leave behind where it was.
+  That is one compiler's output for two targets, not timed on real hardware. Nothing protects against power analysis
+  or fault injection. Verification handles no secrets; its time depends on its inputs.
+- **Key wiping is best effort.** Private keys are zeroed on drop and hidden from `Debug`. Stack and register
+  intermediates are not wiped, nor are copies left by moves (into a `Box` or `Vec`, say).
 
 ### Testing
 
@@ -1051,45 +803,28 @@ Seven things to know when using it:
 cargo test -- ecdsa:: ec::   # known answers, Wycheproof, CAVP, chained signatures against OpenSSL, and the arithmetic against references
 ```
 
-The known-answer tests are the 40 signatures of RFC 6979, appendix A.2 (five hashes, two messages, four curves), which the
-deterministic signature has to reproduce bit for bit, and the per-message secret `k` of each, which the HMAC_DRBG has to
-reproduce too. The rest of the confidence comes from other kinds of test:
+| Source | Coverage |
+|--------|----------|
+| RFC 6979, appendix A.2 | 40 signatures (5 hashes, 2 messages, 4 curves), reproduced bit for bit, plus each nonce `k` from the HMAC_DRBG |
+| Project Wycheproof | 21 files for these curves with SHA-2 and SHA-3, including `_p1363`: 9,767 cases, all passed once; 293 kept in the tests (every fault kind on every curve, all DER faults on P-256 and P-521) |
+| NIST CAVP (CAVS 11.0) | 300 verification vectors, SHA-1 to SHA-512, all passed once; 40 kept (one pass and one fail per curve and hash) |
+| [c2sp.org/det-keygen](https://c2sp.org/det-keygen) | 21 key-generation seeds, including the P-256 seed whose first candidate overflows the order and P-521 candidates cut to 521 bits |
+| Chained signatures | 16 rounds per curve, each signing the previous state; final values from OpenSSL, recomputed in `bench/ecdsacmp`, all agree |
+| Randomized signing | Matches Go's DER output for the same key, digest and random bytes, with digests shorter than, equal to and longer than the order, on all four curves |
 
-- **Project Wycheproof.** The 21 of its ECDSA files that these curves and hashes use (`ecdsa_secp224r1_sha224_test.json`
-  and the others for P-256, P-384 and P-521 with SHA-2 and SHA-3, and the `_p1363` ones) hold 9,767 cases: arithmetic edge
-  cases (a `u1` or `u2` that is zero or the largest value, points that double, the modular inverse at its edge, small and
-  huge `r` and `s`), public keys with special coordinates, every way to write a signature in DER that is not the right one
-  (BER lengths, extra bytes, padded and negative integers, wrong tags), and digests chosen to be special values. All of them
-  were run once and passed. 293 are in the tests: all the kinds of fault on every curve, with the full set of encoding faults
-  on P-256 and P-521, where the length rules differ the most.
-- **NIST's CAVP.** The signature verification vectors of CAVS 11.0, 300 for these curves with SHA-1 to SHA-512, a passing
-  signature, or one with the message, `r`, `s` or the key changed. All of them were run once, and 40 are in the tests: a passing signature and a failing one for every pair of curve and hash.
-- **Key generation.** The deterministic vectors of [c2sp.org/det-keygen](https://c2sp.org/det-keygen), 21 seeds for the four
-  curves, among them the P-256 seed that makes the first candidate overflow the order, and the P-521 ones whose candidates
-  are cut to 521 bits.
-- **Chained signatures.** Rounds of a key derived from the state signing the state, each round seeded by the hash of the
-  last, for 16 rounds on each curve. The final values come from OpenSSL, and `bench/ecdsacmp` recomputes them with Go's
-  `crypto/ecdsa`; the three agree.
-- **Another implementation of the randomized signature.** Go's, given the same key, digest and random bytes, makes the same
-  DER signature as this crate for digests shorter than, as long as and longer than the order, on all four curves.
-- **Mutation testing.** 67 small changes to the code (a constant, an operand, a dropped check, a flipped comparison) in
-  the signing and verifying code, the generator, the DER reader and the arithmetic modulo the order, each applied to a
-  scratch copy: 62 make a test fail, 1 does not compile, and 4 survive. One of the four changes nothing (a control that
-  shows the harness can tell). Two are the handling of `r = 0` in signing and in verifying: a `k` that gives `r = 0` is one
-  whose point has an x-coordinate of 0 or equal to the order (P-256, P-384 and P-521 have such points, P-224 has none),
-  and nobody knows the discrete logarithm of one, and a signature with `r = 0` is rejected anyway, so no input reaches
-  the difference (a zero `s` is reached on purpose and tested). The fourth is the
-  overwriting of a scratch buffer, which cannot be observed. The first run had ten survivors; six were gaps in the tests
-  (a DER length written in the long form where the short one fits, an `s` wider than a private key, the length at which the
-  long form begins, the padding of the generator's input when it already ends on a block boundary, and the two refusals of
-  the reduction modulo the order), and tests now kill them; a later one showed that nothing pinned the number of refused
-  candidates in a row that signing puts up with, and a test does now.
+Wycheproof covers arithmetic edge cases (`u1`/`u2` zero or maximal, doubling points, inverse edge cases, tiny and huge
+`r`, `s`), special public-key coordinates, every invalid DER form (BER lengths, trailing bytes, padded or negative
+integers, wrong tags), and special digests.
 
-The tests also cover the other behaviour of the API: that a digest longer than the order is cut to its leftmost bits (and
-P-521's seven spare bits), that an empty or wrongly sized digest is refused, that a failing reader is reported and `generate`
-gives up on a stuck one, that the branch of the algorithm a random `k` never reaches (a zero `s`) draws another `k`, that
-every malformed signature is refused with the same error whether it is DER or `r || s`, that `Debug` shows no secret, and
-that a private key leaves nothing behind after it is dropped.
+Mutation testing: of 67 mutants across signing, verifying, the DRBG, the DER parser and arithmetic modulo the order, 62
+are caught and 1 does not compile. The 4 survivors are a control that changes nothing; two in the `r = 0` handling (sign
+and verify), which no input can reach (no one knows a `k` giving `r = 0`, and such a signature is rejected anyway); and
+one unobservable overwrite of a scratch buffer.
+
+The tests also check that digests longer than the order are truncated to the leftmost bits (including P-521's seven
+spare bits); empty or wrongly sized digests are refused; reader failures are reported and `generate` gives up on a
+stuck reader; a zero `s` triggers a redraw of `k`; every malformed signature gets the same error, in DER or `r || s`;
+`Debug` shows no secret, and a dropped private key leaves nothing behind.
 
 ### Benchmarking
 
@@ -1100,18 +835,14 @@ cd bench/ecdsacmp && go test -v -run TestThroughput               # Go's crypto/
 cd bench/ecdsacmp && go test -tags purego -v -run TestThroughput  # Go's portable code, with no assembly
 ```
 
-Both sides time the five operations of a signer and a verifier, on the same key and digest: building a private key from its
-bytes (which derives the public key: a multiplication of the generator), building a public key from its bytes (which checks
-that the point is on the curve), a randomized signature, a deterministic one, and the verification of a signature. The
-signatures are DER, which is what a program sends and receives, so writing and reading it is part of the work. Each runs for
-about 50 ms to size a batch of about 100 ms, and the best of five batches is reported. The message is hashed once, outside
-the timed calls, with SHA-256 for P-224 and P-256, SHA-384 for P-384 and SHA-512 for P-521. The randomized signature reads
-its random bytes from a cheap generator on both sides (Go's `GODEBUG=cryptocustomrand=1` makes it use the reader it is
-given), so the cost of the system random source is on neither. Key generation is not timed. Both print the first 8 bytes
-of the deterministic signature, and all three runs print the same.
+Timed with the same key and digest on both sides: new private key from bytes (derives the public key, a generator
+multiplication), new public key from bytes (on-curve check), randomized sign, deterministic sign, verify. Signatures
+are DER, so encoding and parsing are included. Each runs about 50 ms to size a ~100 ms batch; best of five batches.
+The message is hashed once, outside the timing: SHA-256 for P-224 and P-256, SHA-384 for P-384, SHA-512 for P-521.
+Randomized signing reads from a cheap generator on both sides (`GODEBUG=cryptocustomrand=1` for Go), excluding system
+RNG cost. Key generation is not timed. All three runs print the same first 8 bytes of the deterministic signature.
 
-On an Apple M1 Pro, against Go 1.27.1's `crypto/ecdsa` on the same machine (medians of five interleaved runs, in
-microseconds per operation, lower is better):
+Apple M1 Pro, Go 1.27.1, medians of five interleaved runs, µs per operation (lower is better):
 
 | Operation | cryptors | Go stdlib | Go portable (`purego`) |
 |-----------|----------|-----------|------------------------|
@@ -1132,47 +863,30 @@ microseconds per operation, lower is better):
 | P-521 sign deterministic | **347.6** | 413.1 | 421.0 |
 | P-521 verify | 1346.9 | 1344.8 | **1342.8** |
 
-Building a public key takes 0.1 to 0.5 µs for these curves here and 0.2 to 1.0 µs in Go. Run-to-run spread was within about
-5% in every cell above, but the machine was not idle (a desktop on battery, load average 4 to 6, with another benchmark
-running in a different workspace), so the last digit means little.
+- Building a public key takes 0.1 to 0.5 µs here and 0.2 to 1.0 µs in Go.
+- Run-to-run spread was within about 5% on a non-idle machine (battery, load average 4 to 6, another benchmark running),
+  so the last digit means little.
+- Go has P-256 assembly (arm64, amd64, ppc64le, s390x), including generator multiplication; the `purego` column is the
+  like-for-like comparison. Go has no assembly for the other three curves.
+- Verify multiplies a non-generator point, rebuilding its 15-multiple table each call, besides the generator. Randomized
+  signing costs extra because the key and the digest each fill their own SHA-512 HMAC_DRBG block.
 
-Per curve:
+Not done yet, would make it faster:
 
-- **P-224, P-384 and P-521: signing is 16% to 29% faster than Go's, and verifying is level with it.** Go has no assembly for
-  these curves, so this is portable code against portable code. Signing is a multiplication of the generator plus the rest
-  of the work (the inverse modulo the order, the conversion of the point, the nonce generator, the DER), and the first of
-  those is the "new private key" row, which is level on both sides. So the whole difference is in the rest: 31.8 µs for
-  this crate and 62.1 for Go on P-384, 78.4 and 134.7 on P-521, 13.2 and 27.7 on P-224. No profile was taken, so this does
-  not say which part of it.
-- **P-256: 4% to 6% behind Go's portable code on signing, 8% on verifying, and 2.0x to 2.1x and 2.6x behind its assembly.**
-  Go has assembly for P-256 on arm64 (and on amd64, ppc64le and s390x), including a multiplication of the generator, which
-  is most of a signature. The `purego` column is the fair one.
-- **Verifying takes 3.4 to 3.9 times a deterministic signature,** because it multiplies a point that is not the generator,
-  and builds the table of its 15 multiples each time, besides the generator. Nothing in it is secret.
-- **The randomized signature costs 1 to 3.4 µs more than the deterministic one:** the private key and the digest each go into
-  a block of the HMAC_DRBG of their own, which runs on SHA-512 whatever the curve is.
+- Verify (no secrets, so not constant time): a joint `u * G + v * Q` sharing doublings, signed digits, and comparing `r`
+  with the projective x-coordinate to skip an inversion.
+- As for ECDH: a squaring that exploits symmetry, per-prime reductions, and a BMI2/ADX backend on x86-64.
+- Shorter addition chains for the inverses modulo the order and the prime (fixed-exponent powers today).
 
-What would make it faster, none of it done: verifying handles no secret, so it can use methods that are not constant time,
-a joint multiplication of `u * G + v * Q` that shares the doublings, signed digits, and a comparison of `r` with the
-projective x-coordinate that saves the inversion modulo the prime. The things listed for ECDH apply as well (a squaring that
-uses the symmetry of a product, a reduction written for the shape of each prime, and on x86-64 a backend for BMI2 and ADX),
-and so would a shorter chain of multiplications for the inverses modulo the order and the prime, which are the number to
-the power of a fixed exponent now.
-
-No x86 figures are given yet, for the same reason as the others: nothing here can time real x86 hardware, and Rosetta 2
-translates the instructions, so its timings say nothing about an x86 CPU. The manual `Benchmarks` workflow
-(`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
+No x86 figures yet: nothing here can time real x86 hardware, and Rosetta 2 timings say nothing about an x86 CPU. The
+manual `Benchmarks` workflow (`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
 
 ## Ed25519
 
-Ed25519 lets the holder of a private key sign a message so that anyone with the matching public key can check that the
-signature is of that message and was made by that holder, and nobody without the private key can make one. It is EdDSA,
-the Edwards-curve Digital Signature Algorithm of Bernstein, Duif, Lange, Schwabe and Yang (2011), on edwards25519, the
-twisted Edwards form of the curve of X25519, with SHA-512 as its hash. It is one of the signature algorithms of SSH
-(RFC 8709), TLS 1.3 (RFC 8446), X.509 (RFC 8410) and DNSSEC (RFC 8080), and the kind of key OpenSSH's `ssh-keygen` makes
-by default. It is neither a hash nor a cipher, so it implements neither `Digest` nor `BlockCipher`, and unlike ECDH and
-ECDSA nothing in it is generic: there is one curve, and the hash is part of the algorithm. The keys are `SigningKey` and
-`VerifyingKey`, and a `Signature` is 64 bytes.
+EdDSA on edwards25519 (the curve of X25519) with SHA-512, as in [RFC 8032](https://www.rfc-editor.org/info/rfc8032).
+Used by SSH (RFC 8709), TLS 1.3 (RFC 8446), X.509 (RFC 8410) and DNSSEC (RFC 8080), and the default `ssh-keygen` key.
+One curve, hash built in: nothing is generic, and neither `Digest` nor `BlockCipher` applies. Ed448 is not implemented.
+Types: `SigningKey`, `VerifyingKey`, a 64-byte `Signature`, `Error`, `MAX_CONTEXT_LEN`.
 
 | Scheme | Signs | Context | Seed | Public key | Signature | Methods |
 |--------|-------|---------|------|------------|-----------|---------|
@@ -1180,29 +894,13 @@ ECDSA nothing in it is generic: there is one curve, and the hash is part of the 
 | [Ed25519ctx](https://www.rfc-editor.org/rfc/rfc8032#section-5.1) | the message | 1 to 255 bytes | 32 bytes | 32 bytes | 64 bytes | `sign_ctx`, `verify_ctx` |
 | [Ed25519ph](https://www.rfc-editor.org/rfc/rfc8032#section-5.1) | the SHA-512 digest of the message | 0 to 255 bytes | 32 bytes | 32 bytes | 64 bytes | `sign_prehashed`, `verify_prehashed` |
 
-All three are defined in [RFC 8032](https://www.rfc-editor.org/info/rfc8032) (section 5.1), and they share their keys:
-a signature made under one does not verify under another, because every hash input starts with a prefix that names the
-scheme (`dom2`, section 2). A context is a string that a protocol fixes to say what its signatures are for, so that one
-made for a purpose cannot be passed off as one made for another. Plain Ed25519 is the one to use, and the one other
-software means by the name. The RFC says Ed25519ph SHOULD NOT be used (section 8.5): it is there for APIs that hash a
-message before signing it, and it is only as strong as SHA-512's collision resistance, which Ed25519 does not rely on.
-Ed448, the other curve of RFC 8032, is not here.
-
-The private key is a 32-byte seed (RFC 8032 calls it the private key, and Go's `crypto/ed25519` the seed); the two halves
-of its SHA-512 digest are the secret scalar and the prefix that the per-message secrets are made from. A public key is a
-point in 32 bytes, its y-coordinate in little-endian order with the low bit of x in the top bit (section 5.1.2), and a
-signature is the encoding of a point R followed by a number S. A key from the network is validated when it is turned into
-a `VerifyingKey`: it must be what the RFC's decoding accepts (y below the prime, a point of the curve, no sign bit when
-x = 0) and, beyond the RFC, not one of the eight points of small order, under which signatures can be forged. Verifying
-refuses an S that is not below the order of the group, compares R byte for byte with the encoding of the point that the
-equation gives, and checks the cofactorless equation. `SigningKey::to_keypair_bytes` and `from_keypair_bytes` write and
-read Go's 64-byte `ed25519.PrivateKey` (the seed, then the public key), and reading checks that the two halves belong
-together.
-
-Signing is deterministic: the per-message secret is a hash of the prefix and the message, so a signature needs no
-randomness, and the same message always gets the same signature. Only a new key needs random bytes, and the standard
-library has no secure random source that is stable while the `Rand` item above is still planned, so
-`SigningKey::generate` takes any `std::io::Read`, as ECDH and ECDSA do.
+- The three schemes share keys, but a signature from one never verifies under another (`dom2` prefix, section 2).
+- Use plain Ed25519: it is what other software means by the name. RFC 8032 says Ed25519ph SHOULD NOT be used (section
+  8.5), because it relies on SHA-512 collision resistance and Ed25519 does not.
+- The private key is a 32-byte seed. `to_keypair_bytes` / `from_keypair_bytes` use Go's 64-byte `ed25519.PrivateKey`
+  format (seed, then public key); reading checks that the halves match.
+- Signing is deterministic. Only `SigningKey::generate` needs randomness; like ECDH and ECDSA, it takes any
+  `std::io::Read` (std has no stable secure RNG yet).
 
 ### Usage
 
@@ -1213,7 +911,7 @@ fn unhex(s: &str) -> Vec<u8> {
     (0..s.len() / 2).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap()).collect()
 }
 
-// RFC 8032, section 7.1, test 1: a seed, its public key, and the signature of the empty message.
+// RFC 8032, section 7.1, test 1.
 let seed: [u8; 32] = unhex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60").try_into().unwrap();
 let key = SigningKey::from_seed(&seed);
 assert_eq!(
@@ -1229,15 +927,13 @@ assert_eq!(
     ))
 );
 
-// The verifier has the public key and the signature as bytes (this is where a bad key is refused)...
+// Parsing the public key is where a bad key is refused.
 let public = VerifyingKey::try_from(&key.verifying_key().to_bytes()[..]).unwrap();
 let received = Signature::try_from(&signature.to_bytes()[..]).unwrap();
-
-// ...and checks the signature against the message.
 assert_eq!(public.verify(b"", &received), Ok(()));
 assert_eq!(public.verify(b"x", &received), Err(Error::InvalidSignature));
 
-// The same key signs under the other two schemes, and none of the three accepts another's signatures.
+// The other two schemes; none accepts another's signatures.
 let with_context = key.sign_ctx(b"message", b"my protocol, v1").unwrap();
 assert_eq!(public.verify_ctx(b"message", b"my protocol, v1", &with_context), Ok(()));
 assert_eq!(public.verify(b"message", &with_context), Err(Error::InvalidSignature));
@@ -1245,13 +941,13 @@ let digest = Sha512::digest(b"message");
 let prehashed = key.sign_prehashed(&digest, b"").unwrap();
 assert_eq!(public.verify_prehashed(&digest, b"", &prehashed), Ok(()));
 
-// The identity, (0, 1), is a point of the curve, but of small order, and is refused as a key.
+// The identity is a small-order point and is refused as a key.
 let mut identity = [0u8; 32];
 identity[0] = 1;
 assert_eq!(VerifyingKey::from_bytes(&identity), Err(Error::InvalidPublicKey));
 ```
 
-Real keys come from `SigningKey::generate`, given a source of secure random bytes of your own:
+Generating a key with your own source of secure random bytes:
 
 ```rust
 use cryptors::ed25519::SigningKey;
@@ -1263,62 +959,43 @@ let signature = key.sign(b"a message");
 // Send key.verifying_key().to_bytes(), the message and signature.to_bytes() to the other side.
 ```
 
-`examples/ed25519.rs` checks the first example of RFC 8032, then generates a key and runs each of the three schemes on
-it, with a changed message, a changed signature and a wrong context: `cargo run --release --example ed25519`.
+`examples/ed25519.rs` checks RFC 8032's first example, then runs all three schemes on a fresh key, including a changed
+message, a changed signature and a wrong context: `cargo run --release --example ed25519`.
 
 ### Security
 
-Ed25519 is not broken. The best known attacks take about the square root of the size of the group, which has 2^252 and
-some elements, for the 128 bits of security that RFC 8032 (section 8.5) gives it, like P-256 and AES-128. A large quantum
-computer would break it, by Shor's algorithm, and a signature that has to stay trustworthy after one exists needs a
-post-quantum scheme such as ML-DSA, which is also on the list above, alongside or instead.
+128-bit security (RFC 8032, section 8.5), like P-256 and AES-128. Not broken classically, but a large quantum computer
+would break it (Shor). For long-lived signatures, use a post-quantum scheme such as [ML-DSA](#ml-dsa) alongside or instead.
 
-Six things to know when using it:
-
-- **The randomness is the caller's, and there is less of it to get wrong than in ECDSA.** `generate` is only as good as
-  the reader it is given, and a predictable one makes every key it produced guessable. After that nothing is random: the
-  per-message secret comes from a hash of the key and the message (RFC 8032, section 8.2), so the failure that costs
-  ECDSA its keys, a secret reused or partly predictable from one signature to the next, cannot happen here. What a
-  deterministic signature gives up is protection against faults: someone who can make one computation of a signature go
-  wrong and see the result beside a correct one can work out the key (Romailler and Pelissier, 2017). Nothing here
-  protects against that.
-- **Which signatures verify is spelled out, because implementations differ.** S must be below the order ℓ, which stops
-  anyone from turning one valid signature into another by adding ℓ (RFC 8032, section 8.4); R is compared byte for byte
-  with the encoding of `[S]B - [k]A`, so a non-canonical R never matches; and the equation is the cofactorless
-  `[S]B = R + [k]A`, which the RFC allows in place of `[8][S]B = [8]R + [8][k]A`. The two differ only on signatures that no
-  honest signer makes. All three are what Go's `crypto/ed25519` does. The public key is where this crate is stricter:
-  `VerifyingKey::from_bytes` takes only the canonical encoding of a point that is not of small order. Go also accepts
-  encodings with y of p or more, or with the sign bit set when x = 0, which the RFC's decoding rejects, and the eight
-  points of small order, under which a signature can be made without the private key (under the identity, `R = [S]B`
-  verifies for every message, and Go accepts it). So every signature this crate accepts, Go accepts too, and the reverse
-  fails only for those keys, which no key generation produces.
-- **A signature is unique.** With those rules, nobody can turn a valid signature into a second one of the same message
-  under the same key, which ECDSA cannot say. A program that identifies a signature by its bytes can rely on that.
-- **Contexts and prehashing are for the protocols that ask for them.** A context should be a constant of the protocol,
-  not anything taken from the message (RFC 8032, section 8.3). An empty Ed25519ctx context is refused, as OpenSSL refuses
-  it: the RFC says it SHOULD NOT be empty, and it would be easy to take for plain Ed25519, whose signatures are different.
-  Ed25519ph takes a SHA-512 digest, as a `[u8; 64]`, so a digest of another length does not compile.
-- **The arithmetic is written not to depend on secrets, and that is checked in one way only.** No branch condition or
-  memory address is derived from the seed, the secret scalar, the prefix or a per-message secret: `[s]B` goes through a
-  table lookup that reads all eight entries of a row and keeps one with masks, the formulas are complete, so they have no
-  special cases to branch on, and the inverse that encodes a point is a power with a fixed exponent. The masks go through
-  `core::hint::black_box`, because a compiler may turn a mask back into a jump, and `black_box` is a request, not a
-  guarantee (it costs about 2.5% of a signature). What backs the claim is the assembly that `rustc` 1.95 produced, in a
-  release build, for `aarch64-apple-darwin` and `x86_64-unknown-linux-gnu`, which was inspected: in the functions that
-  derive a key and sign, the conditional jumps are loops over a public number of windows, table entries, words or
-  squarings; the check of whether the table of multiples of B has been built; checks of public lengths (of the message
-  and the context) and of an allocation; and, in `from_keypair_bytes`, the comparison of the two halves of a key pair,
-  which stops at the first byte that differs and compares public keys only. The point arithmetic and the encoding of a
-  point have none at all. The hashing is SHA-512, whose work and memory accesses depend only on the
-  length of its input (see [SHA-512](#sha-512)). That is one compiler's output for two targets, with no timing
-  measurement on real hardware behind it, and nothing protects against attacks that read power consumption or inject
-  faults. Verifying handles no secret, and its time depends on its inputs.
-- **Keys stay in memory for as long as they exist.** The seed, the secret scalar and the prefix of a `SigningKey` are
-  overwritten with zeros when it is dropped, as are the copies the crate makes of them (the digest of the seed, the
-  per-message secret and its digits, the prefix in the hash input), and `Debug` shows only the public key. That is best
-  effort: the working values of the arithmetic (points and numbers that depend on a key, on the stack and in registers
-  while it is in use), what SHA-512 copies onto its own stack, and the copy that moving a key (into a `Box` or a `Vec`,
-  say) can leave behind are not overwritten.
+- **Randomness.** Only `generate` is random, and it is only as good as its reader. The per-message secret is a hash of
+  key and message (section 8.2), so ECDSA-style nonce reuse cannot happen; the cost is no protection against fault
+  attacks (Romailler and Pelissier, 2017).
+- **Verification rules** (implementations differ). Together they make signatures unique: nobody can turn a valid
+  signature into a second valid one of the same message and key.
+  - S must be below ℓ (no malleability by adding ℓ, section 8.4).
+  - R is compared byte for byte with the encoding of `[S]B - [k]A`, so a non-canonical R never matches.
+  - The equation is cofactorless, `[S]B = R + [k]A`, which the RFC allows.
+  - `VerifyingKey::from_bytes` accepts only canonical encodings (y below p, no sign bit when x = 0) of points not of
+    small order. Small-order keys allow forgeries: under the identity, `R = [S]B` verifies for every message.
+  - The R, S and equation rules match Go's `crypto/ed25519`. Go also accepts non-canonical and small-order keys, which
+    no key generation produces, so Go accepts everything this crate accepts but not the reverse.
+- **Contexts and prehashing.** A context should be a protocol constant, not derived from the message (section 8.3). An
+  empty Ed25519ctx context is refused, as in OpenSSL. Ed25519ph takes a `[u8; 64]` SHA-512 digest, so another length
+  does not compile.
+- **Constant time, checked one way only.** No branch or memory address depends on the seed, secret scalar, prefix or
+  per-message secret:
+  - `[s]B` reads all eight entries of a table row and selects with masks.
+  - The formulas are complete, and point encoding inverts with a fixed-exponent power.
+  - Masks go through `core::hint::black_box` (a request, not a guarantee; about 2.5% of a signature).
+  - We inspected the release assembly from `rustc` 1.95 for `aarch64-apple-darwin` and `x86_64-unknown-linux-gnu`.
+    Key derivation and signing branch only on public loop counts, whether the B table is built, public lengths, an
+    allocation, and the public-key comparison in `from_keypair_bytes`. Point arithmetic and encoding have no
+    branches. SHA-512 depends only on input length (see [SHA-512](#sha-512)).
+  - Not timed on real hardware; no protection against power analysis or fault injection.
+  - Verifying handles no secret; its time depends on its inputs.
+- **Zeroizing is best effort.** The seed, secret scalar, prefix and the crate's copies of them are zeroed on drop;
+  `Debug` shows only the public key. Not wiped: arithmetic temporaries on stack and in registers, SHA-512's stack
+  copies, and copies left behind by moving a key.
 
 ### Testing
 
@@ -1326,46 +1003,28 @@ Six things to know when using it:
 cargo test -- ed25519 ec::fe25519   # RFC 8032, Go's vectors, 768 signatures from Go and OpenSSL, every verification rule, and the arithmetic against references
 ```
 
-The known-answer tests are every example of RFC 8032 for these three schemes: the five of section 7.1 for Ed25519 (with
-the 1023-byte message and SHA(abc)), the four of section 7.2 for Ed25519ctx and the one of section 7.3 for Ed25519ph. The
-rest of the confidence comes from other kinds of test:
-
-- **Go's vectors.** The 128 lines of `crypto/ed25519/testdata/sign.input.gz`, a selection from the file the authors of
-  Ed25519 published with their software: a key, its public key, a message of up to 1023 bytes and its signature, read in
-  Go's 64-byte format. The file is in `src/ed25519/testdata/sign.input`, decompressed but otherwise unchanged, so that it
-  can be compared with Go's.
-- **768 signatures from Go and OpenSSL.** 256 keys derived from SHA-256, each signing a message of 0 to 255 bytes under
-  each of the three schemes, with every context length from 0 to 255, so that the hash inputs end on both sides of
-  SHA-512's block boundaries. The SHA-256 of the outputs comes from Go's `crypto/ed25519`, and `bench/ed25519cmp`
-  recomputes it. OpenSSL 3.6 makes the same signatures, all but the three of the empty message, which its command line
-  cannot sign.
-- **Every rule of verification.** Every bit of a signature, of a public key and of a message flipped; S + ℓ, ℓ and
-  2^256 - 1 as S, and the malleated signature of Go's own test; the identity as R, encoded canonically (accepted) and in
-  two non-canonical ways (refused); all 40 non-canonical encodings of a public key, and the eight points of small order;
-  and, to pin down the cofactorless equation, a key with a component of order 8, under which a signature verifies exactly
-  when the challenge is a multiple of 8. Go's `crypto/ed25519` gives the same verdicts on the R and cofactor cases.
-- **Go's edge cases.** Once, outside the tests, the 768 cases of Filippo Valsorda's `ed25519vectors`, the set that Go's
-  own test downloads (points of small order, non-canonical encodings and mixed-order components, for A and for R): this
-  crate gives the same verdict as Go on 656 of them, and each of the other 112 has a public key of small order, which
-  `VerifyingKey::from_bytes` refuses and Go accepts.
-- **Differential tests.** The field, which X25519 shares and whose tests are in `src/ec/fe25519.rs`, against the generic
-  Montgomery field of the NIST curves (`src/ec/field.rs`), with limbs at the largest values its bounds allow, which no
-  input from the curve comes near, and for the parts that only Ed25519 uses (the negation, the power that takes a
-  square root, the square root of a ratio, the sign); the reduction and the
-  multiplication of scalars against a bit-at-a-time reference, at the values where Barrett reduction can go wrong; and
-  verification's double multiplication against plain double-and-add, at scalars such as 0, ℓ - 1 and repeated bit
-  patterns, since S is whatever the sender of a signature chose.
-- **Mutation testing.** 31 small changes to the code (a constant, an offset, a dropped check, a loop bound) in the field,
-  the scalars, the points, the signing and verifying code and `generate`, each applied to a scratch copy: 30 make a test
-  fail, and the one that survives is the overwriting of the digest of the seed, which cannot be observed. Every test of
-  `src/ed25519/` but the published vectors is the only one to catch at least one of them, and tests that could not be
-  shown to do so were left out. A Barrett constant off by one, a carry lost when two scalars are multiplied, and the offset of the field's
-  subtraction cut from 16 times the prime to twice, pass every known answer and are caught only by the reference tests;
-  a context length written in 7 bits instead of 8 is caught only by the 768 signatures, whose contexts reach 255 bytes.
-
-The tests also cover the other behaviour of the API: the longest context and one byte more, an empty Ed25519ctx
-context, slices of the wrong length, a key pair whose halves do not match, `generate` with a reader that has 32 bytes and
-one that runs out, that `Debug` shows no secret, and that a signing key leaves nothing behind after it is dropped.
+- **RFC 8032:** every example of the three schemes: section 7.1 (five, incl. the 1023-byte message and SHA(abc)), 7.2
+  (four) and 7.3 (one).
+- **Go's vectors:** the 128 lines of `crypto/ed25519/testdata/sign.input.gz`, stored decompressed and unchanged in
+  `src/ed25519/testdata/sign.input`.
+- **768 signatures from Go and OpenSSL:** 256 keys, messages of 0 to 255 bytes, all three schemes, context lengths 0 to
+  255 (crossing SHA-512 block boundaries). The output hash comes from Go's `crypto/ed25519`; `bench/ed25519cmp`
+  recomputes it. OpenSSL 3.6 matches all but the three empty-message signatures, which its CLI cannot make.
+- **Every verification rule:** every bit of signature, key and message flipped; S + ℓ, ℓ and 2^256 - 1 as S; Go's
+  malleated signature; the identity as R (canonical accepted, two non-canonical refused); all 40 non-canonical key
+  encodings and the eight small-order points; a key with an order-8 component to pin the cofactorless equation. Go
+  gives the same verdicts on the R and cofactor cases.
+- **Go's edge cases (run once, outside the tests):** of the 768 cases of Filippo Valsorda's `ed25519vectors`, 656 get
+  the same verdict as Go; the other 112 all have small-order keys, which this crate refuses and Go accepts.
+- **Differential tests:** the field shared with X25519 (`src/ec/fe25519.rs`) against the generic Montgomery field
+  (`src/ec/field.rs`) at maximal limb values, plus Ed25519-only parts (negation, square root, sign); scalar reduction
+  and multiplication against a bit-at-a-time reference at Barrett edge values; verification's double multiplication
+  against double-and-add at scalars like 0 and ℓ - 1.
+- **Mutation testing:** 30 of 31 code mutations make a test fail; the survivor, zeroing the seed digest, is
+  unobservable. Every test in `src/ed25519/` except the published vectors is the only one catching some mutation.
+- **API behaviour:** longest context and one byte more, empty Ed25519ctx context, wrong slice lengths, mismatched key
+  pair halves, `generate` with exactly 32 bytes and with a reader that runs out, `Debug` shows no secret, and a dropped
+  key leaves nothing behind.
 
 ### Benchmarking
 
@@ -1376,17 +1035,18 @@ cd bench/ed25519cmp && go test -v -run TestThroughput               # Go's crypt
 cd bench/ed25519cmp && go test -tags purego -v -run TestThroughput  # Go with no assembly
 ```
 
-Both sides time four operations on the same seed and the same 128-byte message: building a signing key from its seed
-(a SHA-512 digest and a multiplication of B, to have the public key), building a verifying key from its bytes (decoding
-a point), signing, and verifying as Go's `ed25519.Verify` does it, which decodes the key every time; cryptors also times a
-verification with the key decoded once. Go has no call that only decodes a key, so its second row times
-`VerifyWithOptions` with an empty signature, which in Go 1.27.1 decodes the key and then stops at the check of the
-signature's length (the test checks that it still does). Each runs for about 50 ms to size a batch of about 100 ms, and
-the best of five batches is reported. Generating a key from random bytes is not timed. Both print the first 8 bytes of
-the public key and of the signature, and all three runs print the same.
+What is timed, with the same seed and 128-byte message on both sides (key generation is not timed):
 
-On an Apple M1 Pro, against Go 1.27.1's `crypto/ed25519` on the same machine (medians of five interleaved runs, in
-microseconds per operation, lower is better):
+- **new signing key:** from its seed (SHA-512 plus a multiplication of B).
+- **new verifying key:** decoding a point. Go has no decode-only call, so it times `VerifyWithOptions` with an empty
+  signature; in Go 1.27.1 that decodes the key and stops at the length check (the test checks that it still does).
+- **sign**, and **verify** with the key decoded each time, as `ed25519.Verify` does (cryptors also times it with the
+  key decoded once).
+
+Each runs ~50 ms to size a ~100 ms batch; the best of five is reported. All three runs print the same first 8 bytes of
+public key and signature.
+
+Apple M1 Pro, Go 1.27.1, medians of five interleaved runs, µs per operation (lower is better):
 
 | Operation | cryptors | Go stdlib | Go portable (`purego`) |
 |-----------|----------|-----------|------------------------|
@@ -1396,75 +1056,34 @@ microseconds per operation, lower is better):
 | verify | **31.12** | 41.55 | 41.85 |
 | verify, key decoded once | 28.23 | — | — |
 
-Run-to-run spread was within about 5% in every cell but one (a single run of Go's `purego` verification took 62 µs),
-but the machine was not idle (load average 4 to 7.5, with other builds and benchmarks in different workspaces), so the
+Spread was within ~5% except one `purego` verify run (62 µs). The machine was loaded (load average 4 to 7.5), so the
 last digit means little.
 
-Per operation:
+- Go has no arm64 edwards25519 assembly, so `purego` only removes SHA-512 assembly here. On x86-64, Go's field
+  multiplication and squaring are assembly, and `purego` is the like-for-like build.
+- Signing and key building each cost one multiplication of B (~6.9 µs) plus one inversion (~2.5 µs). Verifying is
+  ~253 shared doublings for `[S]B` and `[k]A` (~25 µs) plus one inversion. Decoding a key costs ~2.9 µs.
 
-- **Signing is 1.96x faster than Go's, and building a key 1.64x.** Go has no assembly for edwards25519 on arm64, so this
-  is portable code against portable code, and both use five limbs of 51 bits. Building a key and signing each come down to
-  one multiplication of B (about 6.9 µs here) and one inversion to encode the point (about 2.5 µs). Signing costs 0.4 µs
-  more than building a key here (a second hash and the arithmetic of the scalars) and 3.8 µs more in Go. No profile of Go
-  was taken, so this does not say where its time goes.
-- **Verifying is 1.34x faster.** It is one chain of about 253 doublings shared by `[S]B` and `[k]A`, with an addition at
-  each nonzero digit of their non-adjacent forms (about 25 µs here), then the inversion that encodes the result. Decoding
-  the public key is the difference between the last two rows, 2.9 µs, and is 3.5 µs in Go; it is a power of the same size as
-  the inversion. Verifying takes about three times a signature because of those doublings: the multiplication of B
-  in a signature has a table for every window of the scalar and so needs only 4 of them, for 64 additions, where
-  verifying needs 253, for about as many additions.
-- **`purego` changes little here.** Go has no arm64 assembly for the curve, so on this machine the tag only takes SHA-512
-  off the instructions, which costs up to 4%. On x86-64 Go's field multiplication and squaring are assembly too, and its
-  `purego` build is the like-for-like one there.
+Not done yet: Bernstein-Yang inversion; caching the eight multiples of A in `VerifyingKey` (~0.6 µs per verification,
+1.3 KiB per key, by operation count); a wider window for B; batch verification; incremental SHA-512 input to avoid
+copying long messages; a BMI2/ADX x86-64 backend, as for [ECDH](#ecdh).
 
-The first version of this code was 3% to 6% slower: 10.10 µs for a new signing key, 10.52 for a signature and 32.87 for a
-verification (one run of each, with the harness above). Two changes made the difference, each measured on its own. The
-first is in the field: additions that do not carry (a sum of two results goes straight into a product, which takes limbs
-up to 2^54), a subtraction that adds 16 times the prime instead of twice so that it takes such a sum on its right too,
-and a squaring written out instead of a loop that runs once (12.1 ns against 15.6 for a square, in a microbenchmark);
-together they gave 2% to 6% on every operation. The second is one mask for each entry of the table of B instead of one
-for each of its three numbers, which took 4% off the multiplication of B. Two things were measured and dropped: a window
-of 6 bits for A in place of 5 (1% slower), and putting the hash input on the stack instead of in a `Vec` (no difference
-that the noise let through). The field was Ed25519's own at first, with the same representation as the field of
-X25519, whose additions that do not carry are where the first change came from. The two are now one module,
-`src/ec/fe25519.rs`, with X25519's interface and Ed25519's way of carrying after a product: from the five columns at once
-rather than one after the other, which in a microbenchmark made a product 8% faster and an inversion 14%. That made
-X25519 about 10% faster (see [ECDH](#ecdh)) and left Ed25519 where it was.
-
-What would make it faster, none of it done: an inversion by the constant-time algorithm of Bernstein and Yang (2019)
-instead of a power with 254 squarings, since inverting is a quarter of a signature and a key, and decoding a key is a
-power of the same size; for verifying, keeping the eight multiples of A in a `VerifyingKey` (by a count of the
-operations, about 0.6 µs off each verification under a key that was decoded once, for 1.3 KiB per key), a wider window for B than the 8 bits that digits of one byte
-allow, and batch verification of many signatures at once, which needs randomness; a SHA-512 that takes its input in
-pieces, so that the message is not copied into each hash input (twice per signature, once per verification), which only
-long messages would notice; and, on x86-64, a backend for BMI2 and ADX behind a run-time check, as for ECDH. Nothing here
-can run that one to see what it would gain.
-
-No x86 figures are given yet, for the same reason as the others: nothing here can time real x86 hardware, and Rosetta 2
-translates the instructions, so its timings say nothing about an x86 CPU. The manual `Benchmarks` workflow
-(`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
+No x86 figures yet: nothing here can time real x86 hardware, and Rosetta 2 timings are meaningless. The manual
+`Benchmarks` workflow (`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
 
 ## HKDF
 
-HKDF, the HMAC-based Extract-and-Expand Key Derivation Function of [RFC 5869](https://www.rfc-editor.org/info/rfc5869),
-takes a secret that is not fit to be a key yet and turns it into as many keys as a protocol needs, each bound to what it
-is for. The secret is typically the result of a key exchange, such as [ECDH](#ecdh)'s, which has structure (it is the
-coordinate of a point) and is the same bytes on both sides. HKDF is how TLS 1.3, QUIC, HPKE and the Signal protocol turn
-their shared secrets into keys. It is neither a hash nor a cipher, so it implements neither `Digest` nor `BlockCipher`:
-it is built on HMAC, and so on a hash, and `Hkdf<D>` is generic over any `D: Digest`.
+HKDF ([RFC 5869](https://www.rfc-editor.org/info/rfc5869)) turns a secret that is not yet fit to be a key, such as an
+[ECDH](#ecdh) shared secret, into as many keys as a protocol needs, each bound to its purpose. TLS 1.3, QUIC, HPKE and
+Signal use it. `Hkdf<D>` is built on the crate's [HMAC](#hmac) and is generic over any `D: Digest`; it implements
+neither `Digest` nor `BlockCipher`.
 
-It runs in two steps, where HashLen is the length of one output of the hash:
+Two steps, Extract once per secret and Expand once per key (HashLen is the hash's output length):
 
-- **Extract** concentrates the input keying material (IKM), whose entropy may be spread unevenly over its bytes, into a
-  pseudorandom key: `PRK = HMAC(salt, IKM)`, of HashLen bytes. The salt is optional and not secret; without one it is
-  HashLen zero bytes, which to HMAC is the same key as an empty salt.
-- **Expand** stretches the PRK into output keying material (OKM), one hash output at a time:
-  `T(i) = HMAC(PRK, T(i - 1) | info | i)`, from an empty `T(0)`, cut to the length asked for. `info` names what the
-  output is for. The counter `i` is one byte, so the output is at most 255 blocks long.
-
-The two are separate because their jobs are: Extract needs a salt and makes one key, Expand needs that key and makes
-many, each named by its `info`. A protocol extracts once for each new secret and expands once for each key it needs, and
-skips Extract for a secret that is a uniformly random key already, such as an earlier output (RFC 5869, section 3.3).
+- **Extract**: `PRK = HMAC(salt, IKM)`, HashLen bytes. The salt is optional and not secret; no salt means HashLen zero
+  bytes, the same as an empty salt.
+- **Expand**: `T(i) = HMAC(PRK, T(i - 1) | info | i)` from an empty `T(0)`, cut to the requested length. `info` names
+  the output's purpose. `i` is one byte, so output is at most 255 blocks.
 
 | Hash | `D` | HashLen | Block | Longest output (255 × HashLen) |
 |------|-----|---------|-------|--------------------------------|
@@ -1477,9 +1096,7 @@ skips Extract for a secret that is a uniformly random key already, such as an ea
 | SHA-512/224 | `Sha512_224` | 28 bytes | 128 bytes | 7140 bytes |
 | SHA-512/256 | `Sha512_256` | 32 bytes | 128 bytes | 8160 bytes |
 
-SHA-3 is not on `Digest` yet (see [Example](#example)), so there is no HKDF-SHA3. The HMAC is the crate's own
-([HMAC](#hmac)): an `Hkdf` is an `Hmac<D>` keyed with the PRK, which hashes its padded keys once and starts every block of
-output from the states that leaves.
+No HKDF-SHA3: SHA-3 is not on `Digest` yet (see [SHA-3](#sha-3)).
 
 ### Usage
 
@@ -1492,12 +1109,12 @@ let ikm = [0x0b; 22];
 let salt = [0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c];
 let info = [0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9];
 
-// In one call: Extract, then Expand into the buffer.
+// One call: Extract, then Expand into the buffer.
 let mut okm = [0; 42];
 Hkdf::<Sha256>::derive(&salt, &ikm, &info, &mut okm).unwrap();
 assert_eq!(okm[..8], [0x3c, 0xb2, 0x5f, 0x25, 0xfa, 0xac, 0xd5, 0x7a]);
 
-// Or extract once, then expand one key per purpose, each with its own `info`.
+// Or extract once, then expand one key per purpose.
 let hkdf = Hkdf::<Sha256>::extract(&salt, &ikm);
 let mut client = [0; 16];
 let mut server = [0; 16];
@@ -1505,55 +1122,39 @@ hkdf.expand(b"client write key", &mut client).unwrap();
 hkdf.expand(b"server write key", &mut server).unwrap();
 assert_ne!(client, server);
 
-// A key that is uniformly random already (an earlier output, say) can skip Extract,
-// if it is at least HashLen bytes long.
+// An already uniformly random key of at least HashLen bytes can skip Extract.
 let next = Hkdf::<Sha256>::from_prk(&okm[..32]).unwrap();
 assert!(matches!(Hkdf::<Sha256>::from_prk(&okm[..31]), Err(Error::InvalidPrkLength)));
 
-// Asking for more than 255 blocks is an error, not a panic, and the buffer is left as it was.
+// More than 255 blocks is an error, not a panic; the buffer is left untouched.
 let mut too_long = vec![0; Hkdf::<Sha256>::MAX_OUTPUT_LEN + 1];
 assert_eq!(next.expand(b"", &mut too_long), Err(Error::InvalidLength));
 ```
 
-`examples/hkdf.rs` checks the vector above, then runs an X25519 exchange between a client and a server and derives a
-key for each direction from the shared secret, with both public keys in the `info`: `cargo run --release --example hkdf`.
+`examples/hkdf.rs` checks the vector above, then derives one key per direction from an X25519 exchange, with both public
+keys in `info`: `cargo run --release --example hkdf`.
 
 ### Security
 
-HKDF is not broken. Its security rests on HMAC being a pseudorandom function, which with SHA-256 or SHA-512 nothing known
-contradicts, and the construction comes with an analysis of its own (Krawczyk, CRYPTO 2010, the paper behind the RFC).
-With MD5 or SHA-1 it is there for older protocols: their collisions do not break HMAC, which does not need collision
-resistance, but neither should be chosen for a new design. A quantum computer does not break HKDF the way it would break
-ECDH; Grover's algorithm at most halves the bits of security of a key, which leaves 128 of the 256 of a SHA-256 output.
+HKDF is not broken: it relies on HMAC being a PRF and has its own analysis (Krawczyk, CRYPTO 2010). MD5 and SHA-1 are
+for older protocols only; their collisions do not break HMAC, but do not pick them for new designs. Grover's algorithm at
+most halves a key's security (128 of SHA-256's 256 bits).
 
-Six things to know when using it:
-
-- **Use a salt if there is one.** It need not be secret and can be reused, but it must not be chosen by an attacker and
-  should not depend on the IKM (RFC 5869, section 3.4); HashLen random bytes are ideal. Without a salt HKDF is still
-  sound, with weaker guarantees (section 3.1). An empty salt is the same as none.
-- **Extract a secret, expand a key.** A secret that is not uniformly random, a Diffie-Hellman shared secret above all,
-  goes through `extract`; skipping it would key HMAC with the secret itself (section 3.3). `from_prk` is for a key that
-  is uniformly random already, and refuses one shorter than HashLen (`Error::InvalidPrkLength`).
-- **Bind every key to its purpose and its context with `info`.** Keys derived with different `info` are independent, so a
-  key for one direction, one algorithm or one protocol cannot stand in for another. After a key exchange, `info` (or the
-  salt) is where both public keys go, as RFC 7748 (section 6.1) recommends, so that the keys belong to that exchange.
-  `info` must not depend on the IKM (section 3.2).
-- **The length does not separate keys, and it has a limit.** The same PRK and `info` always give the same bytes, and a
-  shorter output is the start of a longer one: a 16-byte and a 32-byte key derived with the same `info` share their first
-  16 bytes. One PRK gives at most 255 × HashLen bytes; asking for more returns `Error::InvalidLength` and writes nothing.
-  No output at all is allowed.
-- **HKDF does not stretch passwords.** It is fast on purpose and adds no work factor, so a password run through it is as
-  easy to guess as the password itself. A password-based KDF such as PBKDF2, which is on the list above, is for that.
-- **Keys stay in memory for as long as they exist.** An `Hkdf` holds the PRK as a key of HMAC, which is overwritten with
-  zeros when it is dropped, and `Debug` does not print it; HMAC's working copies of the padded key are wiped as well.
-  That is best effort: the hash functions' working values on the stack are not overwritten, nor are the digests they
-  return (each block of output among them), which code generic over `Digest` can read but not overwrite, nor the copy
-  that moving an `Hkdf` can leave behind where it was. The output goes into the caller's buffer, and wiping that is the
-  caller's job.
-
-Nothing that depends on a secret is used as a memory address or as a branch condition: what HKDF does, and every address
-it touches, depends only on the lengths of its inputs and of its output, which are not hidden. Unlike for ECDH, the
-compiled code has not been inspected for that, and no timing measurement backs it up.
+- **Use a salt if you have one.** It is not secret and can be reused, but must not be attacker-chosen or depend on the
+  IKM (section 3.4); HashLen random bytes is ideal. No salt is still sound, with weaker guarantees (section 3.1).
+- **Extract secrets, expand keys.** Non-uniform secrets (Diffie-Hellman outputs above all) must go through `extract`.
+  Skip it only for a key that is already uniformly random (section 3.3); `from_prk` rejects one shorter than HashLen
+  (`Error::InvalidPrkLength`).
+- **Bind each key with `info`.** Different `info` gives independent keys. After a key exchange, put both public keys in
+  `info` (or the salt), per RFC 7748, section 6.1. `info` must not depend on the IKM (section 3.2).
+- **Length does not separate keys.** With the same PRK and `info`, a shorter output is a prefix of a longer one. The
+  maximum is 255 × HashLen bytes; more returns `Error::InvalidLength` and writes nothing. Empty output is allowed.
+- **Not for passwords.** HKDF adds no work factor; use a password-based KDF such as [PBKDF2](#pbkdf2).
+- **Zeroization is best effort.** The PRK (held as an HMAC key) and HMAC's padded-key copies are zeroed on drop, and
+  `Debug` does not print them. Not wiped: the hash functions' stack values, the returned digests (including output
+  blocks), copies left by moving an `Hkdf`, and the caller's output buffer.
+- **Constant time, unverified.** Control flow and memory addresses depend only on input and output lengths, never on a
+  secret. Unlike ECDH, the compiled code has not been inspected and no timing measurement backs this.
 
 ### Testing
 
@@ -1561,26 +1162,17 @@ compiled code has not been inspected for that, and no timing measurement backs i
 cargo test hkdf::   # RFC 5869, and vectors from Go and OpenSSL for all eight hashes
 ```
 
-The known-answer tests are the seven cases of RFC 5869 (Appendix A), for SHA-256 and SHA-1, with inputs longer than a
-block and with an empty salt and info. Each runs through every function of the API: the PRK of Extract, then `expand`,
-`derive`, and `from_prk` with the RFC's PRK. The RFC covers two of the eight hashes, so the rest of the confidence comes
-from vectors that Go's `crypto/hkdf` and OpenSSL 3.6 (`openssl kdf ... HKDF`) both produced, and that agree, for all
-eight:
+- **RFC 5869 Appendix A**: all seven cases (SHA-256 and SHA-1), run through `extract`, `expand`, `derive` and `from_prk`.
+- **Go `crypto/hkdf` and OpenSSL 3.6**, agreeing, for all eight hashes:
+  - salts and `from_prk` keys around one block (HashLen, one block, one block + 1);
+  - the 255-block limit: longest output, one byte over (refused, nothing written), and prefixes ending at the first and
+    last block edges, down to empty;
+  - 1000-byte IKM and `info` for SHA-256 and SHA-512.
+- **API**: empty salt gives a PRK of HashLen zeros, `from_prk` length bounds, drop zeroes the whole `Hkdf`, `Debug`
+  shows no secret.
+- **Mutation check**: 11 deliberate breaks of `src/hkdf/kdf.rs` are each caught by at least one test.
 
-- **The HMAC key around one block.** Salts of HashLen, of one block and of one byte more, and PRKs of one block and one
-  byte more given to `from_prk`: the longest key HMAC pads, and the shortest it replaces by its digest.
-- **The 255-block limit.** The longest output from each hash, of which block 255 is the only one with that counter; one
-  byte more is refused and nothing is written; and outputs that end at the edges of the first and the last block are
-  the start of the longest one, down to an empty output.
-- **Long inputs.** An IKM and an `info` of 1000 bytes each, for SHA-256 and SHA-512, so that every message HMAC hashes is
-  longer than any block.
-
-The tests also cover the rest of the API: an empty salt gives the PRK of HashLen zeros, `from_prk` refuses a key one byte
-short and takes one of HashLen, dropping an `Hkdf` leaves every byte of it zero (it is nothing but its `Hmac`, two hash
-states with no padding between their fields), and `Debug` shows no secret. A scratch copy of `src/hkdf/kdf.rs` with each
-of 11 deliberate breaks (the salt and the IKM swapped, a PRK cut to HashLen, a counter starting at 0 or stopping at 254, a
-length check off by one, the `Hmac` never dropped, ...) fails at least one test for every one of them. HMAC itself is
-tested in its own module; see [HMAC](#hmac).
+HMAC is tested in its own module; see [HMAC](#hmac).
 
 ### Benchmarking
 
@@ -1590,16 +1182,17 @@ cargo test --release hkdf:: -- --ignored --nocapture --test-threads=1
 cd bench/hkdfcmp && go test -v                  # Go's crypto/hkdf, on its crypto/sha256 and crypto/sha512 as shipped
 ```
 
-Both sides run two workloads for SHA-256 and SHA-512, from the same inputs. One expands the PRK of RFC 5869 A.1's inputs
-to the longest output, 8160 or 16320 bytes, 4096 times a pass. The other runs Extract and Expand from a 32-byte secret to
-a 32-byte key, as after a key exchange, 200,000 times a pass, each key being the secret of the next. Each workload has a
-warm-up pass and then five timed ones, of which the best is reported. Both print the last 8 bytes of block 255 and the
-first 8 of the last key of the chain, and the two sides print the same. HKDF has no backend of its own: it runs on the
-backend its hash picks, FEAT_SHA256 and FEAT_SHA512 here, on both sides. `-tags purego` is not run, as there is no
-HKDF code to swap; the hashes have runs of their own, under [SHA-256](#sha-256) and [SHA-512](#sha-512).
+Two workloads each for SHA-256 and SHA-512, same inputs on both sides:
 
-On an Apple M1 Pro, against Go 1.27.1's `crypto/hkdf` on the same machine (medians of five interleaved runs, higher is
-better):
+- **Long Expand**: RFC 5869 A.1's PRK to the longest output (8160 or 16320 bytes), 4096 times per pass.
+- **Short key**: Extract and Expand from a 32-byte secret to a 32-byte key, 200,000 times per pass, each key seeding the
+  next.
+
+One warm-up pass, then the best of five timed passes; both sides print the same check bytes. HKDF has no backend of
+its own and uses its hash's (FEAT_SHA256 and FEAT_SHA512 here). `-tags purego` is not run; see [SHA-256](#sha-256) and
+[SHA-512](#sha-512) for the hashes.
+
+Apple M1 Pro, Go 1.27.1, medians of five interleaved runs, higher is better:
 
 | Workload | cryptors | Go stdlib |
 |----------|----------|-----------|
@@ -1608,47 +1201,17 @@ better):
 | HKDF-SHA512, Expand to 16320 bytes | **274 MiB/s** | 221 MiB/s |
 | HKDF-SHA512, Extract and Expand to a 32-byte key | **1.28 M/s** | 660 k/s |
 
-Run-to-run spread was within 2% in every cell, but the machine was not idle (a desktop, load average 3 to 5, with other
-work running in other workspaces), so the last digit means little. cryptors is ahead on all four rows.
+Run-to-run spread was within 2%, but the machine was not idle (load average 3 to 5), so the last digit means little.
 
-Per workload:
-
-- **Long outputs: cryptors is 1.44x (SHA-256) and 1.24x (SHA-512) faster.** Both sides hash the padded keys once, keep
-  the hash states after them, and start every block from those: two calls of the compression function per block of
-  output. The difference is in the work around them. From the second block on, Go restores its two states from their
-  marshaled bytes for every block, behind the `hash.Hash` interface, and it allocates each output; cryptors copies the
-  states and writes into the caller's buffer. Before the crate had an HMAC, HKDF ran on a stand-in that hashed the padded keys again for every block, four
-  calls instead of two, and Expand measured 135 and 99 MiB/s in three runs: 1.78x and 2.17x behind Go, where it is now
-  ahead.
-- **Short keys: cryptors is 2.15x (SHA-256) and 1.94x (SHA-512) faster.** For a 32-byte key both sides make the same
-  eight calls of the compression function: two to key HMAC with the salt, two for the PRK, two to key HMAC with the PRK,
-  and two for the one block of output. Go's `hkdf.Key` also allocates two HMAC objects with their four hash states, and
-  the output, on every call; cryptors allocates nothing.
-
-Measured against the bare hashes in their own sections (2365 MiB/s for SHA-256, 1386 for SHA-512), two calls of the
-compression function per block would allow about 590 MiB/s of SHA-256 output and about 345 of SHA-512. The figures
-above are 60% and 79% of that. The rest goes outside the compression function: copying the two states that each block
-starts from, wiping the copies afterwards, and the padding. How it splits between those was not measured.
-
-What would make it faster, none of it done: an Expand that started every block from one pair of scratch states, copied
-into from the saved ones and wiped once at the end rather than after every block, which needs a way into HMAC that the
-crate does not have; and, for many derivations at once, hashing their blocks side by side as MD5 and SHA-3 do with their
-`_many` functions, which SHA-2 does not have. Within one Expand there is nothing to run side by side, since each block
-needs the one before it.
-
-No x86 figures are given yet, for the same reason as the others: nothing here can time real x86 hardware, and Rosetta 2
-translates the instructions, so its timings say nothing about an x86 CPU. The manual `Benchmarks` workflow
+No x86 figures yet: Rosetta 2 timings say nothing about real x86 hardware. The manual `Benchmarks` workflow
 (`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
 
 ## HMAC
 
-HMAC, the keyed-hash message authentication code, turns a hash function into a check that a message comes from someone
-who holds a secret key, and has not been changed on the way. The sender computes a short tag from the key and the
-message and sends it along; the receiver computes it again and compares. Without the key, nobody can produce the tag of
-a message they have not seen tagged. It is how TLS, IPsec, SSH and JSON Web Tokens (HS256) authenticate data with a
-hash, and the building block of HKDF and PBKDF2 (on the list above) and of the generator of ECDSA's per-message
-secrets. It is built on a hash but is not one, so it implements neither `Digest` nor `BlockCipher`: `Hmac<D>` is
-generic over the hash, for any `D: Digest`, and like a cipher it holds the key it was built with.
+HMAC turns a hash into a message authentication code: a short tag, computed from a secret key and a message, that
+proves the message came from a key holder and was not changed. TLS, IPsec, SSH, JWT (HS256), [HKDF](#hkdf) and the
+HMAC_DRBG of [ECDSA](#ecdsa) use it. `Hmac<D>` works with any `D: Digest`, holds its key, and implements neither
+`Digest` nor `BlockCipher`.
 
 | HMAC with | `D` | Block | Tag | Shortest truncated tag | Hash defined in | Test vectors |
 |-----------|-----|-------|-----|------------------------|-----------------|--------------|
@@ -1661,42 +1224,36 @@ generic over the hash, for any `D: Digest`, and like a cipher it holds the key i
 | SHA-512/224 | `Sha512_224` | 128 bytes | 28 bytes | 14 bytes | the same | none published; Go and OpenSSL, which agree |
 | SHA-512/256 | `Sha512_256` | 128 bytes | 32 bytes | 16 bytes | the same | the same |
 
-HMAC itself is [FIPS 198-1](https://csrc.nist.gov/pubs/fips/198-1/final), which adopts
-[RFC 2104](https://www.rfc-editor.org/info/rfc2104): `HMAC(K, m) = H((K0 ^ opad) || H((K0 ^ ipad) || m))`, where `K0`
-is the key padded with zeros to a block (or the key's digest, padded, for a key longer than a block), and `ipad` and
-`opad` are the bytes `0x36` and `0x5c` repeated over a block. The outer hash is what `sha256(key || message)` lacks: it
-hides the inner result under a second form of the key, so the tag of one message gives no start on the tag of another,
-and length extension does not apply. SHA-3 does not implement `Digest` yet, so there is no HMAC-SHA3.
-
-A key can have any length, including zero. One longer than a block is hashed first, so it is worth no more than one of
-the tag's length, and RFC 2104 asks for at least that many random bytes. `Hmac::new` hashes the two padded keys once and
-keeps the state of the hash after each (FIPS 198-1, section 6), so every tag after that costs the hashing of the
-message and of the inner digest, and nothing more for the key. A tag is checked with `verify`, which takes only the full
-tag, or with `verify_truncated`, for protocols that send its leftmost bytes (section 5): it takes no fewer than the last
-column says, half the tag and at least 80 bits. Both compare every byte whatever they find, and neither accepts an empty
-tag.
+- Standard: [FIPS 198-1](https://csrc.nist.gov/pubs/fips/198-1/final), which adopts
+  [RFC 2104](https://www.rfc-editor.org/info/rfc2104): `HMAC(K, m) = H((K0 ^ opad) || H((K0 ^ ipad) || m))`.
+- No HMAC-SHA3 yet: SHA-3 does not implement `Digest`.
+- Keys may have any length, including zero; one longer than a block is hashed first.
+- `Hmac::new` hashes both padded keys once and keeps the two states (FIPS 198-1, section 6); each tag then hashes only
+  the message and the inner digest.
+- `verify` takes only the full tag, `verify_truncated` its leftmost bytes down to the last column above; neither
+  accepts an empty tag.
 
 ### Usage
 
 ```rust
 use cryptors::{hmac::{self, Hmac, VerifyError}, sha2::{Sha256, Sha512}};
 
-// RFC 4231, test case 2. `new` hashes the padded key once; every tag reuses the result.
+// RFC 4231, test case 2.
 let mac = Hmac::<Sha256>::new(b"Jefe");
 let tag: [u8; 32] = mac.mac(b"what do ya want for nothing?");
 assert_eq!(tag[..4], [0x5b, 0xdc, 0xc1, 0x46]);
 
-// The receiver checks the tag in constant time, never with `==`.
+// Constant-time check; never compare tags with `==`.
 assert_eq!(mac.verify(b"what do ya want for nothing?", &tag), Ok(()));
 assert_eq!(
     mac.verify(b"what do ya want for everything?", &tag),
     Err(VerifyError::Mismatch)
 );
 
-// A protocol that sends only the first 128 bits, like IPsec's HMAC-SHA-256-128, has its own check.
+// Truncated tags, e.g. IPsec's HMAC-SHA-256-128.
 assert_eq!(mac.verify_truncated(b"what do ya want for nothing?", &tag[..16]), Ok(()));
 
-// A message in several pieces has the tag of the pieces put together, and is never copied into one.
+// A message in pieces, never copied into one buffer.
 assert_eq!(mac.mac_parts(&[b"what do ya ", b"want for nothing?"]), tag);
 
 // One call, for one message under a key.
@@ -1704,7 +1261,7 @@ let tag: [u8; 64] = hmac::hmac::<Sha512>(b"Jefe", b"what do ya want for nothing?
 assert_eq!(tag[..4], [0x16, 0x4b, 0x7a, 0x7b]);
 ```
 
-A real key is random bytes from a source of your own, since the standard library has no secure one that is stable:
+A real key is random bytes from your own source (the standard library has no stable secure one):
 
 ```rust
 use cryptors::{hmac::Hmac, sha2::Sha256};
@@ -1715,49 +1272,34 @@ File::open("/dev/urandom")?.read_exact(&mut key)?;      // on Unix; any io::Read
 let mac = Hmac::<Sha256>::new(&key);
 ```
 
-`examples/hmac.rs` runs a sender and a receiver that share a random key over each of the eight hashes, including a
-forged tag and a changed message that are refused: `cargo run --release --example hmac`.
+`examples/hmac.rs` runs a sender and receiver over all eight hashes and shows a forged tag and a changed message being
+refused: `cargo run --release --example hmac`.
 
 ### Security
 
-HMAC is not broken with any of these hashes. Its security rests on the compression function of the hash behaving like a
-keyed random function, not on collision resistance, so the collision attacks that broke MD5 and SHA-1 as hashes do not
-carry over, and no practical forgery of HMAC-MD5 or HMAC-SHA-1 is known. Neither belongs in a new design all the same:
-RFC 6151 says so for HMAC-MD5, MD5 has never been a NIST-approved hash, and NIST is retiring SHA-1 by the end of 2030.
-Use HMAC-SHA-256 or one of the 64-bit SHA-2 functions. A large quantum computer would not change this much: Grover's
-algorithm searches keys in about the square root of the steps, so a 256-bit key keeps about 128 bits.
+HMAC is not broken with any of these hashes: it needs the compression function to act as a keyed random function, not
+collision resistance, so the MD5 and SHA-1 collision attacks do not carry over. Avoid both in new designs anyway: RFC
+6151 advises against HMAC-MD5, MD5 was never NIST-approved, and NIST retires SHA-1 by the end of 2030. Use HMAC-SHA-256
+or a 64-bit SHA-2. Against a quantum computer (Grover), a 256-bit key keeps about 128 bits.
 
-Five things to know when using it:
-
-- **Compare tags with `verify`, never with `==`.** `verify` goes through every byte of the tag whatever it finds, so
-  the time it takes does not show how many leading bytes of a forged tag were right; `==` stops at the first difference,
-  which is enough to forge a tag a byte at a time.
-- **The tag's length is the protocol's.** `verify` takes only a full-length tag. `verify_truncated` takes any length from
-  `Hmac::<D>::MIN_TAG_LEN` to the full tag: half the output, rounded up, and no fewer than 10 bytes, the two lower bounds
-  of RFC 2104 (section 5). That is more than NIST's floor of 32 bits (SP 800-107 Rev. 1, section 5.3.3), and takes in the
-  truncations protocols use, such as HMAC-SHA-256-128 in IPsec (RFC 4868) and HMAC-SHA1-80 in SRTP. Neither ever accepts
-  an empty tag. The length is not authenticated: the protocol has to fix it, and the caller has to hold the tag to it, or
-  a forger will send the shortest one accepted.
-- **Use a random key of at least the tag's length**, and not a password. A shorter key is weaker than HMAC can be, and a
-  key longer than a block is hashed down to the tag's length first. HMAC is fast by design, which is the wrong property
-  for a password; derive a key from one with a password-hashing construction such as PBKDF2, on the list above and not
-  yet here.
-- **Its timing is written not to depend on secrets, and that is checked in one way only.** What HMAC does with a key or
-  a message depends on their lengths and on nothing else: the hashes here have no table indexed by the data and no branch
-  on it, the padded keys are made with XORs, and the comparison ORs together the differences of every pair of bytes,
-  with one branch, on the result. The accumulator goes through `core::hint::black_box`, so that the compiler cannot
-  reason about it and stop at the first difference, which is a request, not a guarantee. What backs the claim is the
-  assembly `rustc` produced for `aarch64` and `x86_64`, which was inspected: the comparison's only conditional jumps are
-  its loop, over the public length of the tag, and the check of the lengths before it. That is one compiler's output for
-  two targets, with no timing measurement on real hardware behind it, and nothing protects against attacks that read
-  power consumption or inject faults. The lengths of the key, the message and a received tag are not hidden, and neither
-  is whether a tag was refused for its length or its contents; none of them is secret.
-- **The key stays in memory for as long as the `Hmac` does.** An `Hmac` holds the state of the hash after each padded
-  key, from either of which a forger could tag any message, so both are overwritten with zeros when it is dropped, and
-  `Debug` does not print them. So are the states each tag is computed in, and the block that holds the padded key while
-  `new` hashes it. That is best effort: the working values of the compression functions (on the stack and in registers
-  while a block is hashed), the digest of a key longer than a block, and the copy that moving an `Hmac` (into a `Box` or
-  a `Vec`, say) can leave behind where it was are not overwritten. Where that matters, build it where it will stay.
+- **Compare tags with `verify`, never `==`.** `verify` checks every byte; `==` stops at the first difference, letting
+  an attacker forge a tag byte by byte.
+- **The protocol fixes the tag length.** `verify_truncated` accepts `Hmac::<D>::MIN_TAG_LEN` (half the output, rounded
+  up, at least 10 bytes; RFC 2104 section 5) up to the full tag. That clears NIST's 32-bit floor (SP 800-107 Rev. 1,
+  section 5.3.3) and covers HMAC-SHA-256-128 (IPsec, RFC 4868) and HMAC-SHA1-80 (SRTP). The length is not
+  authenticated: enforce the protocol's, or a forger sends the shortest one accepted.
+- **Use a random key at least as long as the tag, not a password.** HMAC is too fast for passwords; derive the key with
+  a password hash such as [PBKDF2](#pbkdf2).
+- **Timing depends only on lengths; checked in assembly, never timed on real hardware.** The hashes have no
+  data-indexed tables or data branches, the pads are XORs, and the comparison ORs all byte differences and branches
+  once on the result (through `core::hint::black_box`, a request, not a guarantee). In `rustc`'s `aarch64` and `x86_64`
+  assembly, its only conditional jumps are the loop over the public tag length and the length check before it. No
+  protection against power analysis or fault injection. Not hidden (none secret): the key, message and received-tag
+  lengths, and whether a tag was refused for its length or its contents.
+- **The key lives as long as the `Hmac`.** Both saved states (either lets a forger tag any message), the per-tag states
+  and `new`'s padded-key block are zeroed on drop and hidden from `Debug`. Best effort only: the compression functions'
+  working values (stack, registers), the digest of a key longer than a block, and copies left by moving an `Hmac` (into
+  a `Box` or `Vec`, say) are not wiped, so build it where it will stay if that matters.
 
 ### Testing
 
@@ -1765,30 +1307,22 @@ Five things to know when using it:
 cargo test -- hmac:: incremental::   # the RFC vectors, vectors from Go and OpenSSL, verification, and the hashes in pieces
 ```
 
-The known-answer tests are the seven test cases of RFC 4231 for HMAC-SHA-224, -256, -384 and -512, including the keys
-longer than a block and the 128-bit truncation, and the seven of RFC 2202 for HMAC-MD5 and HMAC-SHA-1, with its 96-bit
-truncations. Every vector goes through `hmac`, `Hmac::mac`, `mac_parts` and `verify`, and through the one-shot path that
-a hash from outside the crate takes, as well as the streaming one. ECDSA's HMAC_DRBG runs on this HMAC, so its tests
-(the per-message secret numbers of RFC 6979, and the RFC's signatures) exercise it too. The rest of the confidence comes
-from four other kinds of test:
+- **Known answers:** RFC 4231's seven cases for HMAC-SHA-224/256/384/512 (with long keys and 128-bit truncation) and
+  RFC 2202's seven for HMAC-MD5 and HMAC-SHA-1 (with 96-bit truncations), each through `hmac`, `Hmac::mac`, `mac_parts`
+  and `verify`, on the streaming path and on the one-shot path used by hashes from outside the crate. ECDSA's RFC 6979
+  tests exercise HMAC through HMAC_DRBG.
+- **Go and OpenSSL vectors** for all eight hashes (the only source for SHA-512/224 and SHA-512/256), on which Go's
+  `crypto/hmac` and OpenSSL 3.6 agree: RFC 4231 inputs, empty key and message, keys of block length -1, 0 and +1, and
+  messages on both sides of the inner hash's padding boundary.
+- **Hashes in pieces:** each hash's crate-internal incremental form matches the one-shot digest around every block and
+  padding boundary up to two blocks (split at every byte, and byte by byte) and for a 100,000-byte message in uneven
+  pieces; a copied state continues like the original.
+- **Verification:** every tag bit flipped and every length from empty to one byte too long, on `verify` and
+  `verify_truncated`; each hash's shortest truncated tag against the policy.
+- **Multi-part messages:** split in two at every byte, in three at every pair, one byte per part, and none, on both paths.
+- **Wiping:** dropping an `Hmac` or a hash state leaves zeros; `Debug` shows nothing of the key.
 
-- **Vectors from Go and OpenSSL.** For each of the eight hashes, including SHA-512/224 and SHA-512/256, which no RFC
-  covers: the RFC 4231 inputs, the empty key and message, keys one byte shorter than a block, exactly a block and one
-  byte longer (which is hashed first), and messages on both sides of the inner hash's padding boundary, where the length
-  no longer fits in the last block. Go's `crypto/hmac` and OpenSSL 3.6 computed each of them, and agree.
-- **The hashes in pieces.** HMAC runs on an incremental form of each hash, which is internal to the crate. For all eight,
-  it has to give the one-shot digest for messages on both sides of every block and padding boundary up to two blocks,
-  split at every byte and fed one byte at a time, and for a 100,000-byte message in pieces of uneven sizes, so that a
-  hardware backend runs its main loop from the caller's slice. A copy of a state has to carry on as the original would.
-- **Verification.** Every bit of a tag is flipped, and every length from the empty tag to one byte too long is tried,
-  against both `verify` and `verify_truncated`; the shortest truncated tag of each hash is checked against the policy.
-- **Multi-part messages.** Split into two parts at every byte and into three at every pair of bytes, one part per byte,
-  and no parts at all, a message has the tag of the whole, on both paths.
-
-The tests also check that dropping an `Hmac`, or a hash state, leaves zeros where the key and the message were, and that
-`Debug` shows nothing of the key. Each test was checked by breaking, in a scratch copy, the code it guards (a pad byte,
-the rule for long keys, the comparison, the tag-length policy, the order of the parts, the buffering and the padding of
-the hashes in pieces, the wipes) and seeing it fail.
+Each test was checked by breaking the code it guards in a scratch copy and seeing it fail.
 
 ### Benchmarking
 
@@ -1798,17 +1332,14 @@ cargo test --release hmac:: -- --ignored --nocapture --test-threads=1
 cd bench/hmaccmp && go test -v                       # Go's crypto/hmac, on Go's hashes as shipped
 ```
 
-Both sides time three workloads per hash, with the same 32-byte key and the same bytes: one 64 MiB message, next to the
-bare hash of the same bytes; 1,000,000 messages of 64 bytes under one key, next to the bare hash of each message; and
-the same messages with the key set afresh for each one (`hmac::hmac` here, `hmac.New` in Go), which hashes the padded
-key every time, as HKDF does on every call. Each takes the best of five passes after a warm-up pass. Both print the tag
-of the long message and the XOR of all the short messages' tags, and they print the same; the Go side also checks a
-known answer for each hash before it times anything.
+Per hash, same 32-byte key and bytes on both sides, best of five passes after a warm-up: one 64 MiB message and
+1,000,000 messages of 64 bytes under one key, each next to the bare hash; then the same messages keyed afresh for each
+(`hmac::hmac` here, `hmac.New` in Go), as HKDF does on every call. Both sides print the same tags; the Go side first
+checks a known answer per hash.
 
-On an Apple M1 Pro, against Go 1.27.1's `crypto/hmac` on the same machine (medians of five interleaved runs; MiB/s for
-the long message and millions of tags per second for the short ones, higher is better). "One-shot hash" is this HMAC as
-it was before the hashes could take a message in pieces: it copied the padded key and the message into one buffer (on
-the stack when short) and hashed that with `digest`, which is what a hash from outside the crate still gets.
+Apple M1 Pro, Go 1.27.1, medians of five interleaved runs. MiB/s for the long message, millions of tags per second for
+short ones; higher is better. "One-shot hash" is the earlier design, which copied the padded key and message into one
+buffer and called `digest`; hashes from outside the crate still take that path.
 
 | Workload | cryptors | Go stdlib | cryptors, one-shot hash | cryptors, hash alone | Go, hash alone |
 |----------|----------|-----------|-------------------------|----------------------|----------------|
@@ -1825,64 +1356,37 @@ the stack when short) and hashed that with `digest`, which is what a hash from o
 | HMAC-SHA-1, 64-byte messages, keyed for each | **6.20** | 3.10 | 6.23 | | |
 | HMAC-MD5, 64-byte messages, keyed for each | **1.98** | 1.56 | 1.97 | | |
 
-Run-to-run spread was within about 5% in a cell, 7% in a few of Go's and 19% in one (Go's bare SHA-256 of the short
-messages), and the machine was not idle (a desktop, shared
-with other builds and benchmarks, though never two benchmarks at once; in one of the five rounds the shared lock that
-ensures that was released early, so that round may have overlapped other work), so differences of 2 or 3% are within
-the noise. The hashes' own one-shot speeds did not change with the incremental form they gained: each of the eight, on
-every backend this machine has, is within 0.4% of before (medians of five interleaved runs of their throughput tests).
+Spread was within about 5% per cell (7% in a few Go cells, 19% for Go's bare SHA-256 on short messages) on a shared,
+non-idle desktop, so 2-3% differences are noise. Adding the incremental form left each hash's one-shot speed within
+0.4% of before.
 
-Per workload:
+- **Long message:** the message is hashed in place, so HMAC runs at hash speed. The one-shot hash lost 9% (SHA-256),
+  8% (SHA-1), 6% (SHA-512) and 3% (MD5) to copying and wiping.
+- **Short messages, keyed once:** from the two saved states, a 64-byte tag takes three compression calls (two with
+  SHA-512's 128-byte block); the one-shot hash re-hashed both padded keys each time (five, or four), so it is
+  1.34-1.76x slower.
+- **Short messages, keyed for each:** both designs run five compression calls (four with SHA-512), so they are level.
+  Building the two states costs at most 3% (SHA-256); `hmac::hmac` consumes its states rather than copying them.
+- **Wiping:** one volatile store per byte took 36% of an HMAC-SHA-256 tag (6.53 vs 10.23 M tags/s, medians of three
+  interleaved runs); `wipe_bytes`, 16 bytes per store, is within 1.5% of not wiping at all.
 
-- **One long message: HMAC runs at the speed of its hash.** The one-shot hash copied the 64 MiB message, with the
-  padded key in front of it, into a buffer of its own and wiped it afterwards, which cost 9% of the speed of the bare
-  hash with SHA-256, 8% with SHA-1, 6% with SHA-512 and 3% with MD5.
-  Now the message goes to the compression function from where it is, and HMAC is within the noise of the bare hash.
-  Go's `crypto/hmac` streams as well, so against Go this row compares the hashes: ahead with SHA-256 and SHA-512 by 1.2%
-  and 1.4%, behind with SHA-1 by 6.7% and with MD5 by 2.8%, which is where the bare SHA-1 and MD5 of this crate are
-  behind Go's (7.2% and 2.2%).
-- **Short messages under one key: 1.12-1.37x Go.** Both start every tag from the two states saved after the padded keys
-  (FIPS 198-1, section 6), so both run the same compression calls: three for a 64-byte message with a 64-byte block (the
-  message and its padding for the inner hash, the inner digest and its padding for the outer), two with SHA-512's
-  128-byte block. What differs is the rest of a call, and Go's costs more: its bare SHA-256 of one 64-byte message runs
-  at 12.1 M/s against this crate's 20.6, on the same instructions and the same two compression calls. MD5 is closest,
-  1.12x, because its compression function, with no instruction to run on, is most of the time. Against the one-shot
-  hash, which compressed both padded keys again in every tag (five calls instead of three, four instead of two), this is
-  1.34-1.76x.
-- **Short messages, keyed for each: 1.27-2.0x Go, level with the one-shot hash.** Go's `hmac.New` builds two hash
-  objects and two pads every time. Here `new` hashes the two padded keys, which the one-shot hash did in the tag
-  instead, so for a key used once both run the same five compression calls (four with SHA-512), and the two states cost
-  at most 3% (SHA-256) and nothing measurable with the slower hashes. The one-call `hmac::hmac` uses its two states up
-  rather than copying them.
+Possible speedups, none done:
 
-The states are wiped twice for every tag, because they hold the key. One volatile store per byte, which is what `wipe` does
-with bytes, took 36% of an HMAC-SHA-256 tag here (6.53 against 10.23 M tags/s, medians of three interleaved
-runs); `wipe_bytes`, which stores 16 bytes at a time, brings it within 1.5% of not wiping the states' buffers at all.
+- **Faster hashes:** faster SHA-1 or MD5 backends speed HMAC up directly.
+- **A smaller state:** each holds a 144-byte block (the longest an outside `Digest` may have), though the crate's
+  hashes need 64 or 128, and each tag copies and wipes two.
+- **A stateless one-call form** for single-use keys, skipping the two states (the 3% in the SHA-256 keyed-for-each row).
+- **Batched HMAC-MD5** with the up-to-16-lane `Md5::digest_many` on NEON.
 
-What would make it faster, none of it done:
-
-- **The hashes.** HMAC is now as fast as the hash under it, so a faster SHA-1 backend (7% behind Go's here) or MD5 (2%)
-  is a faster HMAC, with nothing to change in HMAC.
-- **A smaller state.** A state holds a 144-byte block, the longest a `Digest` from outside the crate may have, where the
-  crate's hashes need 64 or 128 bytes, and every tag copies and wipes two of them.
-- **A one-call form without states.** For a key used once, hashing the padded keys with the message in one go, as the
-  one-shot hash did, skips building two states; that is the 3% of the SHA-256 row keyed for each.
-- **Many messages at once.** MD5 hashes up to 16 messages side by side on NEON (`Md5::digest_many`), and HMAC-MD5 of a
-  batch of messages could do the same; MD5 is the one hash here where that applies.
-
-No x86 figures are given yet, for the same reason as the others: nothing here can time real x86 hardware, and Rosetta 2
-translates the instructions, so its timings say nothing about an x86 CPU. The manual `Benchmarks` workflow
-(`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
+No x86 figures yet: nothing here can time real x86 hardware, and Rosetta 2 timings say nothing about an x86 CPU. The
+manual `Benchmarks` workflow (`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
 
 ## HPKE
 
-HPKE, Hybrid Public Key Encryption, lets anyone who knows a public key encrypt messages that only the holder of the
-private key can read, with no exchange before the first message. It is hybrid in the usual sense: a key encapsulation
-mechanism (KEM) gives the sender and the recipient a secret in common, a key derivation function (KDF) turns it into the
-keys of an authenticated cipher (AEAD), and the AEAD encrypts the messages. It is the public-key encryption under TLS
-Encrypted Client Hello, MLS and Oblivious HTTP. It is a protocol built on other algorithms, not a primitive, so it
-implements neither `Digest` nor `BlockCipher`: a suite is a value of three parts (`Suite` of a `Kem`, a `Kdf` and an
-`Aead`), the keys are types that belong to one KEM each, and a context is a `Sender` or a `Recipient`.
+HPKE (Hybrid Public Key Encryption) encrypts messages to a public key with no prior exchange: a KEM gives both sides a
+shared secret, a KDF turns it into AEAD keys, and the AEAD encrypts. TLS Encrypted Client Hello, MLS and Oblivious
+HTTP build on it. A protocol rather than a primitive, it implements neither `Digest` nor `BlockCipher`. A `Suite` is a
+`Kem`, a `Kdf` and an `Aead`; keys belong to one KEM; a context is a `Sender` or a `Recipient`.
 
 | KEM | Type | Identifier | Private key | Public and encapsulated key | Shared secret | Built on |
 |-----|------|------------|-------------|-----------------------------|---------------|----------|
@@ -1900,29 +1404,23 @@ implements neither `Digest` nor `BlockCipher`: a suite is a value of three parts
 | AES-256-GCM | `Aead::Aes256Gcm` | `0x0002` | 32-byte key, 12-byte nonce, 16-byte tag | the same |
 | Export-only | `Aead::ExportOnly` | `0xFFFF` | no encryption at all, exports only | |
 
-HPKE is specified in [RFC 9180](https://www.rfc-editor.org/info/rfc9180), its KDF in
-[RFC 5869](https://www.rfc-editor.org/info/rfc5869), its AEAD in
-[NIST SP 800-38D](https://csrc.nist.gov/pubs/sp/800/38/d/final), and the curves of its KEMs are those of [ECDH](#ecdh).
-Every combination of the three parts is a suite, in any of four modes: Base, which says nothing about the sender; PSK,
-in which the sender also proves it holds a pre-shared key; Auth, in which it proves it holds a private key whose public
-key the recipient knows; and AuthPSK, both. ChaCha20-Poly1305, X448 and the post-quantum KEMs (ML-KEM and its hybrids)
-are not implemented. The KDF is the crate's [HKDF](#hkdf), on its [HMAC](#hmac); AES-GCM is private to the crate,
-which has no public modes of operation yet.
+Standards: [RFC 9180](https://www.rfc-editor.org/info/rfc9180) (HPKE), [RFC 5869](https://www.rfc-editor.org/info/rfc5869)
+(HKDF), [NIST SP 800-38D](https://csrc.nist.gov/pubs/sp/800/38/d/final) (GCM). Curves are those of [ECDH](#ecdh); the KDF
+is the crate's [HKDF](#hkdf) on its [HMAC](#hmac). AES-GCM is internal; the crate has no public modes of operation yet.
 
-The keys are encoded as in ECDH: an uncompressed point on the NIST curves, 32 bytes for X25519. A public key from the
-network is validated when it is turned into a `PublicKey`, and so is the encapsulated key `enc` that the recipient
-receives, which is a public key too; the X25519 secret of all zeros that a point of small order forces is refused where
-it is computed. A context encrypts each message under the next nonce, a base nonce XORed with a 96-bit counter, so the
-recipient must open the messages in the order they were sealed, and a context stops after `2^96 - 1` of them. Both sides
-can export further secrets from a context, up to 255 hash lengths each. The parts of a suite are values, not types, because
-HPKE negotiates its suite on the wire by the identifiers in the tables: `Suite::from_ids` takes them, and a key of one KEM
-in a suite of another is the error `KemMismatch` at run time rather than a compile error, as it is in ECDH.
-
-The standard library has no secure random source that is stable and the `Rand` item above is still planned, so HPKE takes
-every secret it would draw at random from the caller, as ECDH's key generation takes a reader: a key pair comes from
-`Kem::derive_key_pair` and some random bytes, and every sender's setup takes `ikm_e`, random bytes from which the
-ephemeral key pair of the encapsulation is derived (RFC 9180, section 7.1.3). Nothing else is random, which is also what
-lets the published test vectors of RFC 9180 be checked through the sender's setup itself.
+- **Suites and modes:** any KEM, KDF and AEAD, in all four modes: Base (sender anonymous), PSK (sender holds a
+  pre-shared key), Auth (sender holds a known private key) and AuthPSK (both). Suites are negotiated by identifier, so
+  the parts are values, not types: `Suite::from_ids` takes the identifiers, and a key of the wrong KEM is `KemMismatch`
+  at run time.
+- **Not implemented:** ChaCha20-Poly1305, X448, post-quantum and hybrid KEMs (the crate has [ML-KEM](#ml-kem), but not
+  as an HPKE KEM).
+- **Keys** are encoded as in ECDH (uncompressed NIST points, 32 bytes for X25519). Public keys and `enc` are validated
+  when parsed into a `PublicKey`; the all-zero X25519 secret from a small-order point is refused.
+- **Contexts** use a base nonce XORed with a 96-bit counter and stop after `2^96 - 1` messages. Both sides can export
+  secrets of up to 255 hash lengths.
+- **Randomness comes from the caller**, since the standard library has no stable secure RNG (see [Rand](#rand)).
+  Key pairs come from `Kem::derive_key_pair` on random bytes; every sender setup derives its ephemeral key pair
+  from `ikm_e` (RFC 9180, section 7.1.3), which also lets the RFC's vectors be checked through the sender's setup.
 
 ### Usage
 
@@ -1930,14 +1428,13 @@ lets the published test vectors of RFC 9180 be checked through the sender's setu
 use cryptors::hpke::{Aead, Kdf, Kem, PublicKey, RecipientMode, SenderMode, Suite};
 
 fn main() -> Result<(), cryptors::hpke::Error> {
-    // The recipient makes a key pair and publishes its public key. In real use the input comes from a
-    // cryptographically secure random source.
+    // The recipient makes a key pair and publishes its public key.
+    // In real use the input comes from a cryptographically secure random source.
     let suite = Suite::new(Kem::P256HkdfSha256, Kdf::HkdfSha256, Aead::Aes128Gcm);
     let sk_r = Kem::P256HkdfSha256.derive_key_pair(&[0x11; 32])?;
     let published = sk_r.public_key().as_bytes().to_vec();
 
-    // The sender receives the bytes (this is where an invalid point is refused), and seals two messages,
-    // with fresh random bytes for the setup.
+    // The sender parses the key (invalid points are refused here) and seals two messages.
     let pk_r = PublicKey::from_bytes(Kem::P256HkdfSha256, &published)?;
     let (enc, mut sender) = suite.setup_sender(&pk_r, b"example v1", SenderMode::Base, &[0x22; 32])?;
     let first = sender.seal(b"message 1", b"attack at dawn")?;
@@ -1949,7 +1446,7 @@ fn main() -> Result<(), cryptors::hpke::Error> {
     assert_eq!(recipient.open(b"message 2", &second)?, b"bring coffee");
     assert_eq!(sender.export(b"reply key", 16)?, recipient.export(b"reply key", 16)?);
 
-    // One message in the PSK mode, with the single-shot functions and X25519.
+    // One message in PSK mode, with the single-shot functions and X25519.
     let suite = Suite::new(Kem::X25519HkdfSha256, Kdf::HkdfSha256, Aead::Aes256Gcm);
     let sk_r = Kem::X25519HkdfSha256.derive_key_pair(&[0x33; 32])?;
     let (psk, psk_id) = (&[0x44; 32][..], &b"key 7"[..]);
@@ -1959,8 +1456,7 @@ fn main() -> Result<(), cryptors::hpke::Error> {
 }
 ```
 
-Real keys and setups take random bytes from a source of your own, as many as a private key of the KEM has
-(`Kem::private_key_len`, 32 for X25519 and P-256, 48 for P-384, 66 for P-521):
+Real keys and setups need `Kem::private_key_len` random bytes (the private key size in the table above):
 
 ```rust
 use cryptors::hpke::Kem;
@@ -1973,56 +1469,43 @@ let sk_r = Kem::P384HkdfSha384.derive_key_pair(&ikm)?;
 // Read fresh bytes the same way for the `ikm_e` of every setup_sender.
 ```
 
-`examples/hpke.rs` checks one vector of RFC 9180, then runs every KEM in every mode, with keys and entropy from
-`/dev/urandom`: `cargo run --release --example hpke`.
+`examples/hpke.rs` checks one RFC 9180 vector, then runs every KEM in every mode with keys from `/dev/urandom`:
+`cargo run --release --example hpke`.
 
 ### Security
 
-HPKE is not broken. RFC 9180 (section 9.1) cites proofs that its modes keep messages and exported secrets confidential
-against active attackers, and that the PSK, Auth and AuthPSK modes authenticate the sender, as long as the KEM, the KDF
-and the AEAD are sound; none of those here has a known practical attack. Like ECDH, none of the four KEMs resists a large
-quantum computer, and HPKE's post-quantum KEMs are not here.
+HPKE is not broken. RFC 9180 (section 9.1) cites proofs of confidentiality against active attackers, and of sender
+authentication in the PSK, Auth and AuthPSK modes, given sound parts; none here has a known practical attack. None of
+the KEMs resists a large quantum computer.
 
-Seven things to know when using it:
-
-- **The randomness is the caller's.** `ikm_e` must be fresh, uniformly random bytes from a cryptographically secure
-  source, at least `Kem::private_key_len` of them, for every setup of a sender, and never used twice or for anything
-  else. Two setups with the same `ikm_e` and inputs make the same context, whose first messages are then encrypted under
-  the same AES-GCM key and nonce, which breaks both the confidentiality and the integrity of AES-GCM; a guessable `ikm_e`
-  lets anyone decrypt the Base and PSK modes. The same goes for the input of `derive_key_pair` and for a pre-shared key,
-  which must have at least 32 bytes of entropy: a password is not one, because HKDF does nothing to slow down guessing,
-  and AES-GCM, which is not key-committing, makes guessing cheaper still (RFC 9180, section 9.5). The crate refuses
-  inputs and pre-shared keys shorter than 32 bytes and than a private key, where the RFC only says they should not be.
-- **A context is a sequence, and its nonces must never repeat.** The recipient opens messages in the order they were
-  sealed, each once; a failed `open` leaves it expecting the same message, and a lost or reordered one makes the context
-  useless. `Sender` and `Recipient` are not `Clone`, because two copies of a sender would seal two messages under one
-  nonce. A context refuses its `2^96`th message.
-- **Base mode authenticates nobody.** Anyone with the public key can send. The PSK modes prove that the sender has the
-  pre-shared key, the Auth modes that it has a private key; a wrong key, PSK or sender shows as `Error::Open` on the first
-  message, not at setup. Auth's assurance has a known limit, key-compromise impersonation: whoever has the recipient's
-  private key can forge messages to it from any sender (section 9.1.1). Sign `(enc, ct)` where that matters.
-- **There is no forward secrecy for the recipient.** Whoever gets the recipient's private key later can decrypt every
-  message ever sent to it (in the PSK modes, with the PSK as well). The sender's side is forward secret: its ephemeral key
-  pair exists only during the setup.
-- **There is no replay protection and no hiding of lengths.** Beyond the order within one context, nothing stops a
-  message from being delivered twice to two contexts, and a ciphertext is as long as its plaintext plus 16 bytes. `info`,
-  the associated data and the exporter context bind what they are given, and nothing else.
-- **The code is written not to depend on secrets, and that is checked in fewer ways than for ECDH.** No branch condition
-  or memory address is derived from a secret in HPKE's own code, in ECDH's arithmetic (see its section for how that was
-  checked) or in GHASH: the hardware backends multiply with instructions that take the same time for every operand, and
-  the scalar one with integer multiplications of masked operands instead of the usual tables of multiples of the key,
-  which relies on the CPU multiplying 64-bit integers in constant time, as current aarch64 and x86-64 cores do. Tags are
-  compared in constant time. The exceptions are known: AES runs on the crate's AES, whose scalar backend, on a CPU without
-  AES instructions, looks up tables at positions given by the key and the data (see [AES](#aes)); and `DeriveKeyPair` on a
-  NIST curve takes longer when it rejects a candidate, which happens with a probability of about 2^-32 on P-256 and far
-  less on the others, and says nothing about the key it finally derives. For GHASH that is a property of the source and of
-  the instructions; the compiled code was looked at only for the aarch64 loop, and no timing measurement backs any of it.
-- **Keys and secrets stay in memory for as long as they exist.** A private key, and every secret of a context (the AES
-  round keys, the GHASH key and its powers, the base nonce, the exporter secret and the intermediate values of the key
-  schedule), are overwritten with zeros when dropped, and `Debug` does not print them; a plaintext that fails its tag is
-  overwritten before it is freed. That is best effort, as for ECDH: the working values on the stack and in registers, the
-  copy a move leaves behind, and the bytes handed back to the caller (plaintexts, exports, serialized keys) are out of
-  reach.
+- **The randomness is the caller's.** `ikm_e` must be fresh, uniformly random, at least `Kem::private_key_len` bytes,
+  and used once per sender setup: a repeated one reuses an AES-GCM key and nonce (breaking confidentiality and
+  integrity), a guessable one lets anyone decrypt Base and PSK modes. The same goes for `derive_key_pair` input and
+  PSKs, which need at least 32 bytes of entropy. A password is not enough: HKDF does not slow guessing, and
+  non-key-committing AES-GCM makes it cheaper (RFC 9180, section 9.5). The crate refuses inputs and PSKs shorter than
+  32 bytes or than a private key (the RFC only says "should not").
+- **A context is a sequence; nonces must never repeat.** Each message is opened once, in order. A failed `open` keeps
+  expecting the same message; a lost or reordered one makes the context useless. `Sender` and `Recipient` are not
+  `Clone`; a context refuses its `2^96`th message.
+- **Base mode authenticates nobody.** PSK modes prove the sender has the PSK, Auth modes a private key. A wrong key, PSK
+  or sender shows as `Error::Open` on the first message, not at setup. Auth is open to key-compromise impersonation: the
+  recipient's private key can forge messages from any sender (section 9.1.1); sign `(enc, ct)` where that matters.
+- **No forward secrecy for the recipient:** a later leak of its private key (plus the PSK, in PSK modes) decrypts every
+  past message. The sender side is forward secret.
+- **No replay protection, no length hiding.** A message can be delivered to two contexts; a ciphertext is the plaintext
+  length plus 16 bytes. `info`, associated data and exporter context bind only what they contain.
+- **Constant-time by construction, less verified than ECDH.** No branch or address depends on a secret in HPKE, ECDH's
+  arithmetic or GHASH. Hardware GHASH uses constant-time instructions; scalar GHASH uses masked integer multiplies (no
+  key tables), relying on constant-time 64-bit multiplication, as on current aarch64 and x86-64 cores. Tags are
+  compared in constant time. Known exceptions:
+  - AES's scalar backend (CPUs without AES instructions) uses key- and data-dependent table lookups, see [AES](#aes).
+  - `DeriveKeyPair` on a NIST curve takes longer when it rejects a candidate (about 2^-32 on P-256, far less elsewhere);
+    this reveals nothing about the final key.
+  - Only the aarch64 GHASH loop was inspected in compiled form; no timing measurement backs any of this.
+- **Secrets are wiped on drop, best effort.** Private keys and context secrets (AES round keys, GHASH key and powers,
+  base nonce, exporter secret, key-schedule intermediates) are zeroed on drop and hidden from `Debug`; a plaintext that
+  fails its tag is zeroed before it is freed. Out of reach: stack and register copies, moved-from copies, and bytes
+  returned to the caller.
 
 ### Testing
 
@@ -2030,37 +1513,29 @@ Seven things to know when using it:
 cargo test -- hpke:: gcm::   # RFC 9180's vectors, Go's, interop with Go both ways, the failures, and AES-GCM's backends
 ```
 
-The known-answer tests are the vectors of RFC 9180's test-vector file in this crate's scope, 72 of them over
-DHKEM(P-256), DHKEM(P-521) and DHKEM(X25519) (the file has none for P-384 and none with HKDF-SHA384), each in the four
-modes. Among them are the suites that the RFC prints in Appendix A, A.1, A.3, A.4, A.6 and A.7, whose values the script
-that filtered the file compared with the RFC's text: the encryptions at sequence numbers 0, 1, 2, 4, 255 and 256, the
-exports, and the intermediate values of the KEM and the key schedule, which the tests check too. The rest of the
-confidence comes from:
+- **RFC 9180:** the 72 vectors of its test-vector file in this crate's scope, DHKEM(P-256), DHKEM(P-521) and
+  DHKEM(X25519) in four modes each (the file has none for P-384 or HKDF-SHA384). They include Appendix A.1, A.3, A.4,
+  A.6 and A.7, checked against the RFC text: encryptions at sequence numbers 0, 1, 2, 4, 255 and 256, exports, and KEM
+  and key-schedule intermediates.
+- **Go:** `crypto/hpke` vectors add 1000 random-length messages and 1000 exports (every length up to 999 bytes) per
+  suite. Interop runs both ways over the 36 shared suites (four KEMs, three KDFs, three AEADs), P-384 and HKDF-SHA384
+  included; `bench/hpkecmp` opens cryptors' output with Go. Go has Base mode only.
+- **Failures:** in each mode, `open` fails after a change to any ciphertext byte, `enc`, associated data, `info`, PSK,
+  PSK id, sender key, recipient key or mode, and when opening out of order or twice. Also covered: the `2^96 - 1` limit,
+  PSK rules, small-order X25519 points, NIST keys off the curve / compressed / at infinity / wrong length (as public
+  keys and as `enc`), invalid private keys, keys of another KEM, short inputs, the export limit, unknown identifiers,
+  `Debug`.
+- **Building blocks:** AES-GCM against its specification's test cases and Go values for 301 short and 9 long messages,
+  on every GHASH backend, with every sealed byte flipped. Each hardware GHASH backend against scalar, around 16-block
+  group boundaries and at every alignment. Scalar GHASH against SP 800-38D's bit-by-bit algorithm on dense operands.
+  ECDH (with Wycheproof), HKDF and HMAC have their own tests.
 
-- **Go.** Go's own vectors for its `crypto/hpke` add a thousand messages of random lengths and a thousand exports of every
-  length up to 999 bytes per suite. Go's `crypto/hpke` sealed messages in the 36 suites the two have in common (four KEMs,
-  three KDFs, three AEADs), P-384 and HKDF-SHA384 included, and cryptors opens them; cryptors seals the same set, and
-  `bench/hpkecmp` opens it with Go. Go's API has the Base mode only, so the other modes rest on RFC 9180's file.
-- **Failures.** Changing any byte of a ciphertext, or the encapsulated key, the associated data, `info`, the PSK, its
-  identifier, the sender's key, the recipient's key or the mode makes `open` fail, in each mode; so does opening out of
-  order or twice. A context stops at sequence number `2^96 - 1`. The tests also cover the PSK rules, the X25519 points of
-  small order wherever they can come in, NIST public keys that are off the curve, compressed, the point at infinity or of
-  the wrong length (as public keys and as `enc`), invalid private keys, keys of another KEM, inputs shorter than a
-  private key, the limit on exports, unknown identifiers and `Debug`.
-- **The building blocks.** AES-GCM against the test cases of its specification and values from Go for 301 short and 9
-  long messages, on every GHASH backend, with every byte of a sealed message changed; every hardware GHASH backend against
-  the scalar one, over lengths around the groups of 16 blocks and at every alignment; the scalar multiplication against
-  the bit-by-bit algorithm of SP 800-38D, on dense operands where carries pile up. ECDH, HKDF and HMAC have their own
-  tests, Wycheproof's among ECDH's.
+The x86-64 GHASH backend passes under Rosetta 2 (PCLMULQDQ) but has not run on an x86 CPU:
+`cargo test --target x86_64-apple-darwin -- hpke:: gcm::`.
 
-The x86-64 GHASH backend passes the same tests under Rosetta 2 (`cargo test --target x86_64-apple-darwin -- hpke:: gcm::`),
-which supports PCLMULQDQ; it has not run on an x86 CPU. The tests were checked against the bugs they guard, by breaking
-the code in a scratch copy in 43 places (constants, masks, labels, limits, the order of the inputs to a hash, the
-chunking of long messages, the wipes; some of them in a private KDF that the crate's HKDF has since replaced) and seeing
-which tests fail: every break but two failed at least one. The two are
-the wipe of a plaintext whose tag does not match, which no test can see, and a check of the length of an export that the
-KDF makes again. Nor is it tested that `seal` refuses a message over the AES-GCM limit, which would take 64 GiB; the
-limit itself is.
+Mutation check: of 43 deliberate breaks in a scratch copy, all but two failed a test: wiping a plaintext with a bad tag
+(not observable) and an export-length check the KDF repeats. `seal` refusing a message over the AES-GCM limit is not
+tested (it would take 64 GiB); the limit itself is.
 
 ### Benchmarking
 
@@ -2072,16 +1547,16 @@ cd bench/hpkecmp && go test -v                       # Go's crypto/hpke as shipp
 cd bench/hpkecmp && go test -tags purego -v          # Go's portable code, with no assembly
 ```
 
-Both sides time the same work, in Base mode with the same keys, `info` and messages, and take the best of five passes after
-a warm-up pass: a setup (a sender's `SetupBaseS` and a recipient's `SetupBaseR`, each with the KEM's own KDF and
-AES-128-GCM) repeated 1000 times per pass for X25519, 400 for P-256, 100 for P-384 and 50 for P-521; and 64 MiB sealed,
-then opened, as 1024 messages of 64 KiB through one context, with DHKEM(X25519), HKDF-SHA256 and each of the two AEADs.
-Go draws the ephemeral key of a sender from `crypto/rand` and cannot be given one, so its ciphertexts differ from run to
-run and from ours, and Go's setup includes reading those random bytes; what both sides print to cross-check is, for each
-KEM, an export of a recipient's context for a fixed `enc`, which is deterministic. All runs printed the same.
+Method (both sides, Base mode, same keys, `info` and messages; best of five passes after a warm-up):
 
-On an Apple M1 Pro, against Go 1.27.1's `crypto/hpke` on the same machine (medians of five interleaved runs; setups in
-microseconds, lower is better, and messages in MiB/s, higher is better):
+- **Setup:** `SetupBaseS` plus `SetupBaseR` with the KEM's own KDF and AES-128-GCM, repeated per pass 1000 times
+  (X25519), 400 (P-256), 100 (P-384), 50 (P-521).
+- **Seal/open:** 64 MiB as 1024 messages of 64 KiB through one context, DHKEM(X25519), HKDF-SHA256, each AEAD.
+- **Cross-check:** Go's ephemeral keys come from `crypto/rand` (included in its setup time), so ciphertexts differ. Both
+  sides print a recipient export for a fixed `enc` per KEM; all runs matched.
+
+Apple M1 Pro, Go 1.27.1, medians of five interleaved runs. Setup in microseconds (lower is better), messages in MiB/s
+(higher is better):
 
 | Workload | cryptors | Go stdlib | Go portable (`purego`) |
 |----------|----------|-----------|------------------------|
@@ -2094,10 +1569,9 @@ microseconds, lower is better, and messages in MiB/s, higher is better):
 | Seal, AES-256-GCM | 4676 | **4798** | 87 |
 | Open, AES-256-GCM | 4690 | **5320** | 88 |
 
-Run-to-run spread was within 1.2% in every cell but Go's AES-128-GCM seal, 3%.
+Run-to-run spread: within 1.2%, except Go's AES-128-GCM seal (3%).
 
-The AES-GCM throughput test times the parts of a seal alone, over the same 64 KiB messages (cryptors only: Go's GCM is one
-assembly routine, with no parts to time):
+AES-GCM parts alone, same 64 KiB messages (cryptors only):
 
 | Part | MiB/s |
 |------|-------|
@@ -2107,49 +1581,31 @@ assembly routine, with no parts to time):
 | AES-128-GCM seal, `aarch64` GHASH / `scalar` GHASH | 5586 / 530 |
 | AES-128-GCM open, `aarch64` GHASH / `scalar` GHASH | 5753 / 537 |
 
-These spread by 0.5% or less but for the counter mode alone, where two of the five runs came out 10% low.
+Spread: 0.5% or less, except counter mode alone, where two of five runs came out 10% low.
 
-Per workload:
+- **Seal/open** processes each 1 KiB of a message once (copy, encrypt, hash) while it is in L1. Counter mode encrypts
+  one block per AES call and GHASH reduces in general-purpose registers: two loops the CPU overlaps only as far as its
+  reorder window allows.
+- **Setup** is dominated by the KEM (three curve multiplications, eighteen HMAC tags and one AES key expansion per side)
+  and follows [ECDH](#ecdh)'s numbers.
 
-- **Sealing and opening: from 5% ahead of Go to 12% behind, where it was ten times behind.** Before the GHASH
-  backends, with GHASH in software, this crate sealed at 551 MiB/s and opened at 557 (medians of three runs, earlier on
-  the same machine); the PMULL backend took that to 5613 and 5738, 10.2 and 10.3x. GHASH and the counter mode now cost
-  about the same per byte, 13165 and 12034 MiB/s alone, and the seal reaches 89% of what doing one after the other would
-  give (6287), going through each 1 KiB of a message once to copy, encrypt and hash it while it is in the L1 cache. Go
-  opens faster than it seals; cryptors does both at about the same speed. What remains is the shape of the loops: Go's
-  arm64 GCM is one assembly loop over eight blocks, their AES rounds side by side and then their GHASH, reduced in vector
-  registers, while here the counter mode encrypts one block per call to the crate's AES and GHASH reduces in
-  general-purpose registers, two loops that the CPU overlaps only as far as its reorder window reaches. With GHASH on the
-  scalar backend, which is what a CPU without PMULL gets, the seal is 530 MiB/s, still 5.5x Go's portable code: the
-  counter mode runs on the AES instructions, which Go's `purego` build gives up.
-- **Setup is the KEM, and follows ECDH.** Each setup is three multiplications on the curve (the ephemeral public key and a
-  Diffie-Hellman on each side), eighteen HMAC tags, and the expansion of an AES key on each side; the numbers line up with
-  ECDH's. X25519 is 17% faster than Go's, both portable code on this machine (Go's X25519 assembly is for x86-64 only).
-  P-256 is level with Go's portable code and 2.6x behind its assembly, which Go has for P-256 on arm64. P-384 and P-521
-  are 15% and 6% behind Go, which has no assembly for them either. Go's figure includes drawing random bytes from
-  `crypto/rand` for each sender; ours does not. The tags come from the crate's HKDF, which keys HMAC with each
-  pseudorandom key once and expands every block from there. Against a private HMAC and HKDF that HPKE had before, which
-  hashed the padded key again for every tag, the setups took 2.6% (P-521) to 5.5% (X25519) less time, but Go's took 2.3
-  to 2.9% less as well between the two sessions, so the change itself is worth about 3% on X25519, where hashing is the
-  largest share of the work, and 1% or less on the NIST curves. Before ECDH's X25519 replaced one that HPKE had of its
-  own, the X25519 setup took 105.5 µs (medians of three runs, two sessions earlier).
+Not done yet, would make it faster:
 
-What would make it faster, none of it done: one loop that does the AES rounds of a group of blocks side by side and then
-their GHASH, as Go's assembly does; the reduction of GHASH in vector registers, with PMULL by the constant of GCM's
-polynomial, instead of moving the sum to general-purpose registers every 16 blocks; an AES entry point that takes
-several counter blocks at once, which matters wherever the AES instructions are not part of the target's baseline (x86-64,
-Linux on aarch64): there the counter mode reaches AES through the run-time dispatcher once per block, and the call is not
-inlined; and, for setup, what the ECDH section lists for the NIST curves.
+- One loop running the AES rounds of a group of blocks side by side, then their GHASH.
+- GHASH reduction in vector registers (PMULL by the GCM polynomial constant) instead of moving to general-purpose
+  registers every 16 blocks.
+- A multi-block AES entry point for counter mode. Where AES instructions are not in the target baseline (x86-64, Linux
+  on aarch64), counter mode goes through the run-time dispatcher once per block, not inlined.
+- For setup, the NIST-curve items listed under ECDH.
 
-No x86 figures are given yet, for the same reason as the others: nothing here can time real x86 hardware, and Rosetta 2
-translates the instructions, so its timings say nothing about an x86 CPU. The manual `Benchmarks` workflow
-(`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners, where AES-GCM uses PCLMULQDQ and
-PMULL if the runner has them, and where AES is not in the target's baseline, so the per-block dispatch above applies.
+No x86 figures yet: Rosetta 2 timings say nothing about x86 CPUs. The manual `Benchmarks` workflow
+(`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners, using PCLMULQDQ and PMULL where
+available; there AES is not in the target baseline, so the per-block dispatch above applies.
 
 ## MD5
 
-MD5, specified in [RFC 1321](https://www.rfc-editor.org/info/rfc1321), is a cryptographic hash function that takes an
-arbitrary-length message and produces a 128-bit (16-byte) digest.
+MD5 ([RFC 1321](https://www.rfc-editor.org/info/rfc1321)) hashes an arbitrary-length message to a 128-bit (16-byte)
+digest.
 
 ### Usage
 
@@ -2167,22 +1623,10 @@ assert_eq!(digests[0], digest);
 
 ### Security
 
-MD5 is cryptographically broken, for several reasons:
-
-- **Collision attacks.** In 2004, researchers demonstrated practical collisions — two different inputs that produce
-  the same MD5 digest. Modern hardware can now generate chosen-prefix collisions in seconds, meaning an attacker can
-  craft two meaningfully different files (e.g. a benign and a malicious document) sharing the same hash.
-- **Insufficient diffusion/strength.** The compression function's weaknesses let collisions be found far faster than
-  the ~2^64 operations a 128-bit digest should require (the birthday bound), undermining the core guarantee of a
-  hash function.
-- **Chosen-prefix and length-extension weaknesses.** Attackers can prepend arbitrary chosen content and still
-  produce colliding digests, which has been exploited to forge rogue CA certificates and sign malicious code.
-- **No collision resistance means no integrity guarantee.** Any use case relying on MD5 to prove a file or message
-  hasn't been tampered with can be defeated by an attacker able to produce a second input with the same hash.
-
-As a result, MD5 **must not** be used for digital signatures, certificate signing, password hashing, or any other
-context requiring collision resistance. It may still appear in non-security contexts such as checksums for
-accidental corruption detection, but even there algorithms like SHA-256 are generally preferred.
+MD5 is broken. Collisions, including chosen-prefix collisions, take seconds on modern hardware and have been used to
+forge CA certificates and signed code. It gives no integrity guarantee against an attacker: do not use it for
+signatures, certificates, password hashing, or anything that needs collision resistance. It is acceptable only for
+detecting accidental corruption, and even there SHA-256 is preferred.
 
 ### Testing
 
@@ -2197,27 +1641,1151 @@ cargo test --release md5 -- --ignored --nocapture --test-threads=1   # cryptors;
 cd bench/md5cmp && go test -v                           # the Go stdlib counterpart
 ```
 
-On an Apple M1 Pro, against Go's `crypto` package on the same machine:
+Apple M1 Pro:
 
 | Workload | cryptors scalar | cryptors accelerated | Go stdlib |
 |----------|-----------------|----------------------|-----------|
 | One 64 MiB message | **625 MiB/s** | — (no MD5 instruction exists) | 642 MiB/s |
 | 1024 × 64 KiB messages | 625 MiB/s | **3022 MiB/s** (NEON, 16 lanes) | 641 MiB/s |
 
-The batch row is the whole point of the multi-buffer backend: the same 64 MiB of input and the same number of
-steps, at 4.8x the scalar throughput, purely from filling the lanes. `crypto/md5` has no batch API, so its
-figure there is just its single-message one measured over 1024 sequential calls.
+- The batch row hashes the same 64 MiB as the single-message row; the speedup comes only from filling the SIMD lanes.
+- `crypto/md5` has no batch API, so its batch figure is 1024 sequential calls.
+- The x86 (SSE2/AVX2) backends are differential-tested against scalar and match the aarch64 digests byte for byte, but
+  have not been benchmarked on a real x86 CPU (Rosetta 2 timings are not meaningful).
 
-No absolute x86 figures are given. Under Rosetta 2 the SSE2 path measures 1.9x its own scalar baseline, but
-emulation translates 256-bit AVX2 into pairs of 128-bit NEON operations, so such ratios say nothing useful
-about real x86 hardware. The x86 backends are verified for *correctness* — differential-tested against the
-scalar reference, with digests over 64 MiB matching the aarch64 ones byte for byte — but have not been
-benchmarked on an x86 CPU.
+## ML-DSA
+
+ML-DSA, the Module-Lattice-Based Digital Signature Algorithm of [FIPS 204](https://csrc.nist.gov/pubs/fips/204/final)
+(CRYSTALS-Dilithium as NIST standardized it), is a post-quantum signature scheme: its lattice problems (module LWE and a
+variant of module SIS) have no known quantum attack, while [ECDSA](#ecdsa) and [Ed25519](#ed25519) fall to Shor's
+algorithm. [RFC 9881](https://www.rfc-editor.org/info/rfc9881) gives its X.509 identifiers. Keys and signatures are
+their own types (not `Digest` or `BlockCipher`), generic over a parameter set: one of three types implementing the
+sealed trait `Parameters`.
+
+Types: `PrivateKey<P>`, `PublicKey<P>`, `Signature<P>`, the parameter sets `MlDsa44`, `MlDsa65` and `MlDsa87`,
+`PreHash`, `Error`, `MAX_CONTEXT_LEN`, `SEED_LEN`.
+
+| Parameter set | Type | NIST category | Private key | Public key | Signature |
+|---------------|------|---------------|-------------|------------|-----------|
+| ML-DSA-44 | `MlDsa44` | 2 (collision search on SHA-256) | 32 bytes | 1,312 bytes | 2,420 bytes |
+| ML-DSA-65 | `MlDsa65` | 3 (key search on AES-192) | 32 bytes | 1,952 bytes | 3,309 bytes |
+| ML-DSA-87 | `MlDsa87` | 5 (key search on AES-256) | 32 bytes | 2,592 bytes | 4,627 bytes |
+
+- Keys and signatures of different parameter sets do not compile together.
+- The private key is the 32-byte seed of `ML-DSA.KeyGen` (`PrivateKey::from_seed`, `PrivateKey::seed`). FIPS 204's
+  expanded private key (2,560 to 4,896 bytes) is not accepted: it is larger, holds nothing to check against the seed,
+  and RFC 9881 (section 8.1) recommends the seed for storage and exchange.
+- `sign` is **hedged**: 32 bytes from any `std::io::Read` go into the mask, so two signatures of one message differ.
+  `sign_deterministic` needs no reader; `verify` checks both. The standard library has no stable secure random source,
+  so `generate` also takes a reader, as in ECDH, ECDSA and Ed25519.
+- Every function takes a **context** of 0 to 255 bytes (`b""` for none) that the verifier must repeat; a longer one is
+  `Error::ContextTooLong`.
+- **HashML-DSA** (`sign_prehash`, `verify_prehash`) signs a digest plus its function's identifier, from the twelve
+  functions of FIPS 204's registry (`PreHash`: SHA-2, SHA-3 and the two SHAKEs; `PreHash::digest` computes it). FIPS 204
+  prefers the pure form; RFC 9881 does not allow HashML-DSA in X.509.
+- **External μ** (`PublicKey::message_representative`, `sign_mu`, `verify_mu`, RFC 9881 appendix D): a client hashes a
+  large message with the public key into 64 bytes, and the signer takes only those.
+
+### Usage
+
+```rust
+use cryptors::mldsa::{Error, MlDsa44, PrivateKey, PublicKey, Signature};
+
+// A key from a seed of 32 bytes of 0x2a, and the deterministic signature of "Hello world" with no context: a case of
+// Project Wycheproof.
+let key = PrivateKey::<MlDsa44>::from_seed(&[0x2a; 32]);
+assert_eq!(key.public_key().as_bytes()[..8], [0xdb, 0x9a, 0xc6, 0x77, 0x08, 0xf2, 0xba, 0x0f]);
+let signature = key.sign_deterministic(b"Hello world", b"")?;
+assert_eq!(signature.as_bytes()[..8], [0x1a, 0xa6, 0x9c, 0xb5, 0xed, 0x35, 0x20, 0x45]);
+
+// The verifier has the public key and the signature as bytes (this is where a key or a signature of the wrong length is
+// refused)...
+let public = PublicKey::<MlDsa44>::from_bytes(key.public_key().as_bytes())?;
+let received = Signature::<MlDsa44>::from_bytes(signature.as_bytes())?;
+
+// ...and checks the signature against the message and the context.
+assert_eq!(public.verify(b"Hello world", b"", &received), Ok(()));
+assert_eq!(public.verify(b"Hello world!", b"", &received), Err(Error::VerificationFailed));
+assert_eq!(public.verify(b"Hello world", b"v2", &received), Err(Error::VerificationFailed));
+
+// A hedged signature takes 32 random bytes from a reader, here a fixed string; it is another signature of the same
+// message, and just as valid.
+let mut noise: &[u8] = &[7; 32];
+let hedged = key.sign(&mut noise, b"Hello world", b"")?;
+assert_ne!(hedged, signature);
+assert_eq!(public.verify(b"Hello world", b"", &hedged), Ok(()));
+```
+
+Real keys come from `PrivateKey::generate`; hedged signing also needs random bytes from your own source:
+
+```rust
+use cryptors::mldsa::{MlDsa65, PrivateKey};
+use std::fs::File;
+
+let mut rng = File::open("/dev/urandom")?;                 // on Unix; any io::Read of random bytes will do
+let key = PrivateKey::<MlDsa65>::generate(&mut rng)?;
+let signature = key.sign(&mut rng, b"a message", b"")?;
+// Store key.seed(); send key.public_key().as_bytes(), the message and signature.as_bytes() to the other side.
+```
+
+`examples/mldsa.rs` runs each parameter set through hedged and deterministic signing, a changed message, context and
+signature, then HashML-DSA: `cargo run --release --example mldsa`.
+
+### Security
+
+The best known attacks are lattice reduction, classical or quantum, and the three parameter sets are chosen against them
+(the categories are NIST's). FIPS 204 makes the scheme strongly unforgeable (section 3.1): nobody can turn a valid
+signature into another valid one of the same message.
+
+- **Hedged or deterministic.** The mask must never repeat or be guessable. Both forms derive it from the key and the
+  message; hedging adds 32 random bytes, which protects against fault attacks (a fault in one of two computations of the
+  same deterministic signature may leak the key) and costs nothing if the bytes are bad (FIPS 204, sections 3.4 and
+  3.6.1). Deterministic signing time depends on the message, not the key (section 3.6.1, footnote 3): sign hedged to
+  keep the message private.
+- **The randomness is the caller's.** FIPS 204 asks the reader of `generate` for at least 128 (ideally 192) bits of
+  strength for ML-DSA-44, 192 for ML-DSA-65 and 256 for ML-DSA-87 (section 3.6.1).
+- **Signing is rejection sampling.** Attempts whose answer could leak the key are discarded: 4.25, 5.1 and 3.85 attempts
+  on average per set (FIPS 204, table 1). Which check rejected, and how often, is public (Dilithium specification,
+  section 5.5), so hedged signing time varies without revealing the key. Past `2^16 / l` attempts (at least 9,362)
+  signing panics; the standard shows 814 are needed with a probability below `2^-256` (appendix C).
+- **Pick the pre-hash on purpose.** FIPS 204 wants at least `2 * lambda` digest bits (section 5.4): 256, 384 and 512,
+  excluding 224-bit functions for all sets and 256-bit ones for ML-DSA-65 and ML-DSA-87. This crate does not stop you
+  from naming one. A signature of a digest binds the function, and is not a signature of the message.
+- **Secret-independent arithmetic, checked one way only.** No branch or memory address derives from `s1`, `s2`, `t0`,
+  `K` or the mask, except the `s1`/`s2` sampler's length (which candidates it discards) and the accept-or-reject
+  decision, public by design. The transform, products, reductions, rounding and hint use only additions,
+  multiplications, shifts and masks; the one table, the roots of unity, is read in loop order. In the assembly of
+  `rustc` 1.95 for `aarch64-apple-darwin` and `x86_64-apple-darwin`, the only conditional jumps in signing and key
+  generation are fixed-count loops, checks of public lengths and of an allocation, SHAKE buffer management, the
+  rejection test (on the mask the norm check accumulates), packing an accepted signature's hint, and the sampler's
+  discards. That is one compiler on two targets, not a proof; no timing was measured on real hardware, and nothing
+  protects against power analysis or fault injection. Verifying handles no secret; its time depends on its inputs.
+- **Lengths and encodings are checked.** Public keys and signatures of the wrong length are refused, as are hints not in
+  FIPS 204's one encoding (section 3.6.2 and algorithm 21), so a signature has one encoding. Any string of the right
+  length is a public key, all zeros included; that one verifies nothing.
+- **Keys stay in memory for as long as they exist.** Dropping a key zeroes its seed and secret vectors; `Debug` shows no
+  secret (a public key shows the start of its hash). Not wiped: arithmetic temporaries in stack and registers, and
+  copies left by moves. A private key keeps its expanded form (28, 47 and 79 KiB of heap) so signing does not expand it
+  again; a public key holds its bytes. Signing or verifying uses under 64 KiB of stack in release builds.
+
+### Testing
+
+```sh
+cargo test -- mldsa:: sha3::xof   # known answers, vectors of NIST and Wycheproof, and each part against its definition
+cargo test --release mldsa::keypair::tests::accumulated_10000 -- --ignored   # 10,000 keys and signatures for each set
+MLDSA_VECTORS=/dir cargo test --release mldsa::conformance -- --ignored --nocapture   # every ACVP and Wycheproof vector
+```
+
+- **Accumulated known answers** ([C2SP's CCTV](https://github.com/C2SP/CCTV/tree/main/ML-DSA/accumulated)): seeds from
+  one SHAKE128; each key and its deterministic signature of the empty message go into a second SHAKE128, of which 32
+  bytes are compared. 100 rounds per set in the tests, 10,000 in the ignored one; both pass. Hashing 30,000 keys and
+  signatures leaves no room for an error in key generation, signing or encoding.
+- **NIST ACVP** (ACVP-Server `ML-DSA-keyGen`, `sigGen`, `sigVer` for FIPS 204): all 615 were run once with no failure;
+  97 are in the tests (`src/mldsa/testdata/acvp.txt`). That is 75 key generation, 360 signing (external, pre-hash and
+  internal interfaces, hedged and deterministic, with an external μ) and 180 verification (valid, or with a changed
+  message, commitment, `z` or hint).
+- **NIST rejection-loop known answers** (ACVP draft, tables 1 and 2): 27 cases, reaching each of the four rejections
+  (`z`, the low bits, `c * t0`, the number of hints) and 64 to 100 rejections. Each case's name is its count of
+  discarded attempts, which the tests check.
+- **Project Wycheproof:** all 1,138 ML-DSA cases (287 signing from a seed, 220 from an expanded key, 631 verifying),
+  including every wrong hint encoding, signatures at the norm bounds, all-zero keys and 256-byte contexts. The 1,129
+  this API can express (nine have a wrong-length seed, which `from_seed` refuses to compile) were run once; 87 are in
+  the tests (`src/mldsa/testdata/wycheproof.txt`).
+- **OpenSSL 3.6.4** (once, outside the tests, all three sets): same public key from the same seed, same deterministic
+  signature with empty and non-empty context, each verifies the other's signatures and this crate's hedged ones, and
+  both reject a wrong context.
+- **Go:** `bench/mldsacmp` reproduces the signature of the first Wycheproof case with Go's `crypto/mldsa`.
+- **Each part against its definition:** the transform against a schoolbook polynomial product at the extremes of its
+  bounds; `Decompose`, `Power2Round` and `UseHint` against the standard for every number modulo `q`, and `MakeHint` at
+  every boundary signing reaches; the three samplers and `SampleInBall` against the written-out algorithms; packing at
+  every width; the loop's four checks where they flip; streaming SHAKE against the one-shot functions at every input
+  split.
+- **API behaviour:** 255- and 256-byte contexts; the 12 pre-hash functions (identifiers not interchangeable, wrong
+  digest length); the message `M'` written out; every byte class of a signature changed; wrong-length keys and
+  signatures; hint encodings; a failing or short reader; `generate` reading exactly 32 bytes; `Debug` hiding secrets; a
+  dropped key leaving neither the seed nor `K`; clones being independent.
+- **Mutation testing:** of 106 small changes (a constant, an operand, a dropped check, a flipped comparison) to the
+  transform, rounding, samplers, packing, key generation, signing, verifying, API and streaming SHAKE, each in a scratch
+  copy, 98 fail a test, 1 does not compile and 7 survive. Three overwrite a local copy never read again (the seed and
+  random bytes after use, a key-generation scratch vector), which cannot be observed; two change nothing (a harness
+  control, and an addition to an always-zero position); one moves the threshold where `Decompose` brings a low part down
+  by `q` to a value no low part takes; one compares the commitment hash a byte short, which no failing signature passes,
+  since a changed byte changes all the others. The first run's three other survivors were gaps (a hint count past
+  `omega` with indices in order, and the exact edges of the bounds on `z` and `c * t0`, which no vector hits); tests now
+  pin them.
+
+### Benchmarking
+
+```sh
+# cryptors: one test thread, so the benchmarks don't compete with each other for the CPU.
+cargo test --release mldsa:: -- --ignored --nocapture --test-threads=1
+cd bench/mldsacmp && go test -v -run TestThroughput               # Go's crypto/mldsa as shipped, with its assembly Keccak
+cd bench/mldsacmp && go test -tags purego -v -run TestThroughput  # Go with a portable Keccak
+```
+
+Each run uses the same key and a 64-byte message with no context, and times building a private key from its seed
+(expanding the matrix and the secret vectors, and the public key), building a public key from its bytes (which hashes
+it), hedged and deterministic signing, and verifying. Key generation is not timed. The attempt count depends on the
+message, so signing cycles through 256 messages; a batch holds more than that, so the deterministic row does the same
+work on both sides. Hedged signing reads its 32 bytes from a cheap generator here and from the system in Go (which
+ignores the reader it is given). Each operation runs about 50 ms to size a batch of about 100 ms; the best of five
+batches is reported. Both sides print the first 8 bytes of the deterministic signature of the benchmark key, and all
+three runs print the same.
+
+Apple M1 Pro, Go 1.27.1, medians of five interleaved runs, µs per operation (lower is better):
+
+| Operation | cryptors | Go stdlib | Go portable (`purego`) |
+|-----------|----------|-----------|------------------------|
+| ML-DSA-44 new private key | **35.7** | 101.3 | 121.2 |
+| ML-DSA-44 new public key | **1.7** | 2.0 | 3.8 |
+| ML-DSA-44 sign | **96.7** | 260.4 | 286.2 |
+| ML-DSA-44 sign deterministic | **91.2** | 248.5 | 271.7 |
+| ML-DSA-44 verify | **32.0** | 74.4 | 91.2 |
+| ML-DSA-65 new private key | **61.9** | 168.4 | 205.8 |
+| ML-DSA-65 new public key | **2.5** | 2.9 | 5.6 |
+| ML-DSA-65 sign | **146.8** | 412.0 | 468.7 |
+| ML-DSA-65 sign deterministic | **144.8** | 427.9 | 461.8 |
+| ML-DSA-65 verify | **51.7** | 116.3 | 146.3 |
+| ML-DSA-87 new private key | **96.5** | 236.0 | 296.0 |
+| ML-DSA-87 new public key | **3.3** | 3.8 | 7.4 |
+| ML-DSA-87 sign | **154.8** | 495.9 | 520.3 |
+| ML-DSA-87 sign deterministic | **159.5** | 491.9 | 516.7 |
+| ML-DSA-87 verify | **84.9** | 186.8 | 241.3 |
+
+Run-to-run spread was within 8% in every cell (most in hedged signing, which draws new random bytes), on a desktop that
+was not idle (load average about 5), so the last digit means little.
+
+- **Signing takes 2.7 to 3.2 times less here than in Go, verifying 2.2 to 2.3 times, and building a private key 2.5 to
+  2.8 times.** Building a public key, one SHAKE256 of the key in both, differs by 15 to 18%. Go's ML-DSA is also
+  portable (only its Keccak is assembly), so this compares two implementations of one algorithm. This one keeps sums
+  unreduced, adds a row's products in 64 bits before one reduction (Go reduces after each addition and subtraction), and
+  keeps working vectors in fixed-size stack arrays.
+- **A signature averages 3.85 to 5.1 loop passes**, most rejected before the expensive checks, so `sign` costs about
+  that many passes: masks (SHAKE256), `A * y` (a transform and an inverse per polynomial), the hash and the answer.
+  Hedged and deterministic rows are within each other's spread.
+- **Verifying** makes the rows of `A` as it goes (a SHAKE128 stream for each of the `k * l` entries) and keeps none, so
+  it costs a third to a half of a deterministic signature.
+- The Keccak is this crate's, using `FEAT_SHA3` on this CPU. Go's uses it on Apple's Arm cores too, and assembly on
+  x86-64, but not on other Arm cores, where it finds the instructions slower than its portable code.
+
+Possible speedups, not done: explicit NEON and AVX2 for transforms and products (the compiler already uses NEON in
+places); the two- and four-way Keccak of `sha3::shake128_many` for the matrix and masks, which are many independent
+streams; caching `A` in a public key that verifies often (16 to 56 KiB); batch verification.
+
+No x86 figures yet: nothing here can time real x86 hardware, and Rosetta 2 translates the instructions, so its timings
+say nothing about an x86 CPU. The manual `Benchmarks` workflow (`.github/workflows/bench.yml`) runs both sides on
+GitHub's x86-64 and Arm runners.
+
+## ML-KEM
+
+ML-KEM, the Module-Lattice-Based Key-Encapsulation Mechanism of [FIPS 203](https://csrc.nist.gov/pubs/fips/203/final)
+(CRYSTALS-Kyber as NIST standardized it), is a post-quantum way to agree on a secret: a sender uses the receiver's
+public key to make a random shared secret and a ciphertext holding it, and only the private key's holder can find the
+secret in the ciphertext. Its lattice problem (module LWE) has no known quantum attack, while [ECDH](#ecdh) falls to
+Shor's algorithm. That matters already, because a key exchange recorded today can be opened later; hybrid key exchanges
+such as X25519MLKEM768 in TLS run ML-KEM next to X25519. Keys, ciphertexts and secrets are their own types (not `Digest`
+or `BlockCipher`), generic over a parameter set: one of three types implementing the sealed trait `Parameters`.
+
+Types: `DecapsulationKey<P>`, `EncapsulationKey<P>`, `Ciphertext<P>`, `SharedSecret<P>`, the parameter sets `MlKem512`,
+`MlKem768` and `MlKem1024`, `Error`, `SEED_LEN`, `SHARED_SECRET_LEN`.
+
+| Parameter set | Type | NIST category | Decapsulation key | Encapsulation key | Ciphertext | Shared secret |
+|---------------|------|---------------|-------------------|-------------------|------------|---------------|
+| ML-KEM-512 | `MlKem512` | 1 (key search on AES-128) | 64 bytes | 800 bytes | 768 bytes | 32 bytes |
+| ML-KEM-768 | `MlKem768` | 3 (key search on AES-192) | 64 bytes | 1,184 bytes | 1,088 bytes | 32 bytes |
+| ML-KEM-1024 | `MlKem1024` | 5 (key search on AES-256) | 64 bytes | 1,568 bytes | 1,568 bytes | 32 bytes |
+
+- Keys, ciphertexts and secrets of different parameter sets do not compile together. Most protocols use ML-KEM-768.
+- The decapsulation key is the 64-byte seed `d || z` of `ML-KEM.KeyGen` (`DecapsulationKey::from_seed`,
+  `DecapsulationKey::seed`). FIPS 203's expanded decapsulation key (1,632 to 3,168 bytes) is not accepted: a seed is
+  smaller and there is nothing to check in it.
+- `EncapsulationKey::from_bytes` does the checks of FIPS 203 section 7.2: the length, and the "modulus check" that every
+  coefficient is below `q = 3329`. `Ciphertext::from_bytes` checks the length, the only thing to check.
+- **Decapsulation cannot fail.** A ciphertext not made for the key (made for another key, changed on the way, or random)
+  still gives a secret, `J(z || c)`, which looks random and which the sender does not have ("implicit rejection"). The
+  failure shows at the first use of the wrong secret.
+- The standard library has no stable secure random source, so key generation and encapsulation take any `std::io::Read`,
+  as in ECDH, ECDSA, Ed25519 and ML-DSA. A reader of fixed bytes gives the same key or secret every time, which is for
+  tests. Encapsulation reads FIPS 203's 32-byte message `m` from it and nothing else; no function takes `m` as an
+  argument, because FIPS 203 does not let an application choose it (section 6.2).
+
+### Usage
+
+```rust
+use cryptors::mlkem::{Ciphertext, DecapsulationKey, EncapsulationKey, Error, MlKem768};
+
+// The receiver's key, from a seed of 64 bytes.
+let seed: [u8; 64] = core::array::from_fn(|i| (i * 37 + 11) as u8);
+let key = DecapsulationKey::<MlKem768>::from_seed(&seed);
+assert_eq!(key.encapsulation_key().as_bytes()[..8], [0xa6, 0xd5, 0x10, 0xac, 0xe0, 0x7b, 0xbc, 0x1a]);
+
+// The sender has the bytes of the encapsulation key (this is where a key of the wrong length, or with a coefficient
+// that is not below q, is refused)...
+let public = EncapsulationKey::<MlKem768>::from_bytes(key.encapsulation_key().as_bytes())?;
+
+// ... and makes a secret and a ciphertext for it. A real program passes a source of secure random bytes; this is the
+// 32 bytes of the message m, fixed, so that the answer is known.
+let m: [u8; 32] = core::array::from_fn(|i| (i * 7 + 3) as u8);
+let (secret, ciphertext) = public.encapsulate(&mut &m[..])?;
+assert_eq!(secret.as_bytes()[..8], [0xc9, 0x48, 0x02, 0xd6, 0xa8, 0x31, 0x78, 0xe9]);
+
+// The receiver reads the ciphertext and finds the same secret.
+let received = Ciphertext::<MlKem768>::from_bytes(ciphertext.as_bytes())?;
+assert_eq!(key.decapsulate(&received), secret);
+
+// A ciphertext that has been changed is not refused. It gives a secret that is not the sender's, and the same one
+// every time.
+let mut changed = ciphertext.as_bytes().to_vec();
+changed[0] ^= 1;
+let rejected = key.decapsulate(&Ciphertext::<MlKem768>::from_bytes(&changed)?);
+assert_ne!(rejected, secret);
+
+// A ciphertext of the wrong length is.
+assert_eq!(Ciphertext::<MlKem768>::from_bytes(&changed[1..]), Err(Error::InvalidCiphertext));
+```
+
+Real keys come from `DecapsulationKey::generate`; the sender's encapsulation also needs random bytes from your own
+source:
+
+```rust
+use cryptors::mlkem::{DecapsulationKey, EncapsulationKey, MlKem768};
+use std::fs::File;
+
+let mut rng = File::open("/dev/urandom")?;                 // on Unix; any io::Read of random bytes will do
+
+// The receiver: store key.seed(), and send the encapsulation key to the sender.
+let key = DecapsulationKey::<MlKem768>::generate(&mut rng)?;
+let to_send = key.encapsulation_key().as_bytes();
+
+// The sender, which has those bytes: send the ciphertext, and keep the secret.
+let public = EncapsulationKey::<MlKem768>::from_bytes(to_send)?;
+let (secret, ciphertext) = public.encapsulate(&mut rng)?;
+```
+
+`examples/mlkem.rs` runs a complete exchange on each parameter set, with a changed ciphertext, bytes that are not a key
+or a ciphertext, and a session key derived from the secret with [HKDF](#hkdf): `cargo run --release --example mlkem`.
+
+### Security
+
+The best known attacks are lattice reduction, classical or quantum, and the three parameter sets are chosen against them
+(the categories are NIST's). FIPS 203 makes the scheme secure against an attacker who can have ciphertexts of their
+choice decapsulated (IND-CCA2), with the Fujisaki-Okamoto transform: decapsulation encrypts the message it found again,
+and compares.
+
+- **Authenticates nobody.** Both sides get the same secret, but neither learns who the other is: a man in the middle is
+  possible unless something binds the keys to identities (signatures such as [ML-DSA](#ml-dsa) or [Ed25519](#ed25519),
+  certificates, a pre-shared secret). Prefer a fresh key pair for each exchange.
+- **The secret is an input, not a protocol.** Its 32 bytes are uniform for anyone without the decapsulation key. Derive
+  the protocol's keys from it with a key derivation function such as [HKDF](#hkdf), with the encapsulation key and the
+  ciphertext in the input to bind them to this exchange.
+- **Younger than the curves.** Lattice problems have been studied for less time than discrete logarithms, so many
+  deployments pair ML-KEM with X25519 in a hybrid, where an attack on either alone is not enough. This crate has both,
+  and no combiner for them.
+- **Implicit rejection hides whether a ciphertext was good.** `decapsulate` takes the same steps for every ciphertext
+  and picks the secret with a mask, so the time does not tell. A protocol must not reveal it another way, such as an
+  error message that depends on the secret being right.
+- **The randomness is the caller's.** `generate` and `encapsulate` are only as good as their reader. FIPS 203 asks for a
+  generator at least as strong as the set: 128, 192 and 256 bits (section 3.3). A predictable reader makes a key or
+  secret that can be guessed.
+- **Keys are checked when read**, as described above. Every other string of the right length is a ciphertext, and every
+  one with each coefficient below `q` is an encapsulation key.
+- **Secret-independent arithmetic, checked one way only.** No branch or memory address derives from `s`, `d`, `z`, the
+  message `m` or the noise. The transform, products, reductions, compression and noise sampling use only additions,
+  multiplications, shifts and masks; the only tables, the roots of unity, are read in loop order. The ciphertext
+  comparison ORs the differences of all bytes, and a mask picks the secret. The one sampler that depends on its bytes,
+  `SampleNTT`, takes the public `rho`. In the assembly `rustc` 1.95 produced for `aarch64-apple-darwin` and
+  `x86_64-apple-darwin`, the only conditional jumps in ML-KEM-768's key generation, encapsulation and decapsulation are
+  fixed-count loops, comparisons with constant buffer sizes, checks of public lengths and of an allocation, and the
+  loops that overwrite buffers. That is one compiler on two targets, not a proof; no timing was measured on real
+  hardware, and nothing protects against power analysis or fault injection.
+- **Keys stay in memory for as long as they exist.** The seed, the secret vector and every shared secret are zeroed when
+  dropped; `Debug` shows no secret (an encapsulation key shows the first bytes of its hash). Not wiped: arithmetic
+  temporaries in stack and registers, and copies left by moves. A decapsulation key keeps its expanded form (5, 9 and 14
+  KiB of heap) so decapsulating does not expand it again; an encapsulation key holds 4, 7 and 12 KiB. Every operation
+  uses at most 16 KiB of stack in a release build, 24 KiB in a debug build.
+
+### Testing
+
+```sh
+cargo test -- mlkem:: sha3::xof   # known answers, vectors of NIST, Wycheproof and C2SP, and each part against its definition
+cargo test --release mlkem::keypair::tests::accumulated_10000 -- --ignored   # 10,000 rounds for each set
+MLKEM_VECTORS=/dir cargo test --release mlkem::conformance -- --ignored --nocapture   # every ACVP and Wycheproof vector
+```
+
+- **Accumulated known answers** of Go's `crypto/mlkem`: seeds, messages and bad ciphertexts from one SHAKE128, and a
+  hash of all resulting keys, ciphertexts and secrets; 100 rounds per set are in the tests. Go and OpenSSL 3.6 agree on
+  the ML-KEM-768 and ML-KEM-1024 values; OpenSSL makes the ML-KEM-512 one, which Go has no code for.
+- **C2SP's accumulated vectors** (CCTV, `ML-KEM/README.md`): the same kind of stream, 10,000 rounds per set, with the
+  expanded decapsulation key in the hash. They are for the FIPS 203 draft, whose key generation hashes `d` without the
+  `k` the final standard adds, so the test makes keys that way. Everything after that hash is unchanged, so they cover
+  sampling, the transform, compression, encoding, encapsulation and decapsulation for all three sets. All three hashes
+  match (the test runs on demand).
+- **NIST ACVP** (ACVP-Server `ML-KEM-keyGen-FIPS203` and `ML-KEM-encapDecap-FIPS203`): all 240 were run once with no
+  failure; 54 are in the tests. That is 75 key generation, 75 encapsulation, 30 decapsulation (good and modified
+  ciphertexts) and 60 key checks (an encapsulation key with a coefficient too large, a decapsulation key with a modified
+  hash).
+- **Project Wycheproof:** all 1,725 ML-KEM cases, including random, bit-flipped, too long and too short ciphertexts;
+  C2SP's `strcmp` vectors (a zero byte must not end the ciphertext comparison); malleable ciphertexts; seeds whose `rho`
+  gives unusually large or many rejected matrix entries; encapsulation keys with an unreduced coefficient (100 of them)
+  or the wrong length; and expanded decapsulation keys with a corrupted hash or encapsulation key. The 1,665 this API
+  can express (60 have a seed of the wrong length, which `from_seed` refuses to compile) were run once with no failure;
+  123 are in the tests.
+- **C2SP's "unlucky" vectors:** draft seeds for which `SampleNTT` must read more than 575 bytes of SHAKE128 for one
+  matrix entry, which a random seed needs once in 2^38.
+- **OpenSSL 3.6.4** (once, outside the tests, all three sets, 100 rounds each): the same encapsulation key from the same
+  seed, the same ciphertext and secret from the same message, and the same secret from a bad ciphertext.
+- **Go:** `bench/mlkemcmp` reproduces with Go's `crypto/mlkem` the encapsulation key of Wycheproof's first
+  key-generation case, and the key, ciphertext and secret of its benchmark inputs, which this crate's tests pin too
+  (with OpenSSL's values for ML-KEM-512).
+- **Each part against its definition:** the transform, its inverse and the `T_q` product against the specification's
+  written-out algorithms and its appendix A tables (which the roots of unity computed at compile time must equal), and
+  against polynomial multiplication by the definition `X^256 = -1`, at the extremes the bounds on intermediate values
+  allow; Barrett's reduction for every 16-bit number; Montgomery's over its whole range; `Compress` and `Decompress`
+  against the definitions with a true division for every number modulo `q`; the encodings against the specification's
+  bit strings; the modulus check for every number from `q` to 4095; the two samplers against the written-out algorithms.
+- **API behaviour:** a full exchange with the encapsulation key and ciphertext as bytes; readers giving exactly 32 and
+  64 bytes, failing or running out; the implicit-rejection secret written out for a change to the first and last byte of
+  `u`, of `v` and in the middle; every length around the right one for keys and ciphertexts; a coefficient equal to `q`
+  in a key's last polynomial; `Debug` showing no secret; a dropped key and a dropped secret leaving nothing behind.
+- **Mutation testing:** of 88 small changes (a constant, an operand, a sign, a dropped check, a flipped comparison, a
+  dropped wipe) to the reductions, transform, product, encodings, samplers, key generation, encryption, decapsulation
+  with its implicit rejection, and the API, each in a scratch copy, 86 fail a test and 2 survive. Both survivors
+  overwrite a copy of the random bytes that is never read again (the seed in `generate`, the message in `encapsulate`),
+  which cannot be observed. The first run had one more survivor, a gap: key generation without reducing `t` gives the
+  same key bytes, so it passes every vector, but breaks the bound the product is sized for; a test now looks at it.
+  Tests that only restated another's check were then removed: each remaining test reads a published vector, writes out
+  the definition of a part, or is the only one to fail for some change.
+
+### Benchmarking
+
+```sh
+# cryptors: one test thread, so the benchmarks don't compete with each other for the CPU.
+cargo test --release mlkem:: -- --ignored --nocapture --test-threads=1
+cd bench/mlkemcmp && go test -v -run TestThroughput               # Go's crypto/mlkem as shipped, with its assembly Keccak
+cd bench/mlkemcmp && go test -tags purego -v -run TestThroughput  # Go with a portable Keccak
+```
+
+Each run uses the same key, and times building a decapsulation key from its seed (expanding the matrix and the secret
+vector, and the encapsulation key), building an encapsulation key from its bytes (the modulus check, its hash, and
+expanding the matrix), encapsulating, and decapsulating a good ciphertext. Key generation is not timed. Both sides keep
+the matrix in the key, so encapsulating and decapsulating do not expand it again. Encapsulation reads its 32 bytes from
+a cheap generator here and from the system in Go, whose `Encapsulate` takes no reader. Each operation runs about 50 ms
+to size a batch of about 100 ms, and the best of five batches is reported. Both sides print the first 8 bytes of the
+shared secret of a fixed message, and all three runs print the same. Go has ML-KEM-768 and ML-KEM-1024 only.
+
+Apple M1 Pro, Go 1.27.1, medians of five interleaved runs, µs per operation (lower is better):
+
+| Operation | cryptors | Go stdlib | Go portable (`purego`) |
+|-----------|----------|-----------|------------------------|
+| ML-KEM-512 new decapsulation key | 7.2 | — | — |
+| ML-KEM-512 new encapsulation key | 3.9 | — | — |
+| ML-KEM-512 encapsulate | 4.2 | — | — |
+| ML-KEM-512 decapsulate | 6.2 | — | — |
+| ML-KEM-768 new decapsulation key | **11.8** | 37.9 | 46.3 |
+| ML-KEM-768 new encapsulation key | **7.7** | 10.6 | 17.4 |
+| ML-KEM-768 encapsulate | **5.4** | 34.8 | 36.3 |
+| ML-KEM-768 decapsulate | **8.2** | 50.6 | 54.1 |
+| ML-KEM-1024 new decapsulation key | **18.6** | 57.9 | 71.8 |
+| ML-KEM-1024 new encapsulation key | **13.2** | 18.3 | 29.8 |
+| ML-KEM-1024 encapsulate | **7.0** | 53.6 | 55.5 |
+| ML-KEM-1024 decapsulate | **10.6** | 79.5 | 83.7 |
+
+Run-to-run spread was within 3% in every cell, on a desktop that was not idle (load average 3 to 5), so the last digit
+means little.
+
+- **Decapsulating takes 6.2 to 7.5 times less here than in Go, encapsulating 6.4 to 7.7 times, building a decapsulation
+  key 3.1 to 3.2 times and building an encapsulation key 1.4 times.** Go's ML-KEM is also portable (only its Keccak is
+  assembly), so this compares two implementations of one algorithm. Reading both, the difference is in how arithmetic
+  and memory are handled (not measured separately). This one keeps coefficients in `i16` without reducing after each
+  sum, multiplies with Montgomery's reduction, adds a row's products in 32 bits before one reduction, and keeps working
+  vectors in stack arrays. Go reduces every sum with a conditional subtraction, and allocates slices and a SHAKE state
+  for each polynomial it samples.
+- **The matrix is most of the work of a key.** The "new encapsulation key" row (the matrix, a hash and the modulus
+  check) is 65% (ML-KEM-768) and 71% (ML-KEM-1024) of the "new decapsulation key" row, which adds the noise, the
+  transforms and the products. The matrix is `k * k` streams of about three SHAKE128 blocks each, on a Keccak both sides
+  run on `FEAT_SHA3` here, which is why that gap is the smallest (1.4 times).
+- **An encapsulation key is parsed, and its matrix expanded, once**: that is the "new encapsulation key" row.
+  Encapsulating again to the same key repeats only the second row.
+
+Possible speedups, not done: explicit NEON and AVX2 for transforms and products (the compiler uses NEON in places); the
+two- and four-way Keccak of `sha3::shake128_many` for the matrix, which is many independent streams; batch
+decapsulation.
+
+No x86 figures yet: nothing here can time real x86 hardware, and Rosetta 2 translates the instructions, so its timings
+say nothing about an x86 CPU. The manual `Benchmarks` workflow (`.github/workflows/bench.yml`) runs both sides on
+GitHub's x86-64 and Arm runners.
+
+## PBKDF2
+
+PBKDF2 ([RFC 8018](https://www.rfc-editor.org/info/rfc8018), PKCS #5 v2.1) derives a key from a low-entropy password by
+repeating a keyed hash as many times as the caller chooses, so each guess costs an attacker as much as it costs the
+owner. FIPS 140, WPA2, LUKS1, 1Password and many file formats ask for it when a key comes from a password. It is one
+function, [`derive`](#usage), built on the crate's [HMAC](#hmac) for any `D: Digest`; it implements neither `Digest` nor
+`BlockCipher`.
+
+For each block `i` of HashLen bytes of key (HashLen is the hash's output length), with `c` iterations:
+
+- `U(1) = HMAC(password, salt | INT(i))`, where `INT(i)` is the block number as a 32-bit big-endian integer, from 1;
+- `U(j) = HMAC(password, U(j - 1))`, for `j` from 2 to `c`;
+- `T(i) = U(1) ^ U(2) ^ ... ^ U(c)`; the key is `T(1) | T(2) | ...`, cut to the length asked for.
+
+The salt gives two users with the same password different keys. Each `U(j)` feeds the next, so the chain cannot run in
+parallel; the blocks are independent.
+
+| Hash | Call | HashLen | Block | Longest key ((2^32 − 1) × HashLen) |
+|------|------|---------|-------|------------------------------------|
+| MD5 | `derive::<Md5>` | 16 bytes | 64 bytes | 68,719,476,720 bytes |
+| SHA-1 | `derive::<Sha1>` | 20 bytes | 64 bytes | 85,899,345,900 bytes |
+| SHA-224 | `derive::<Sha224>` | 28 bytes | 64 bytes | 120,259,084,260 bytes |
+| SHA-256 | `derive::<Sha256>` | 32 bytes | 64 bytes | 137,438,953,440 bytes |
+| SHA-384 | `derive::<Sha384>` | 48 bytes | 128 bytes | 206,158,430,160 bytes |
+| SHA-512 | `derive::<Sha512>` | 64 bytes | 128 bytes | 274,877,906,880 bytes |
+| SHA-512/224 | `derive::<Sha512_224>` | 28 bytes | 128 bytes | 120,259,084,260 bytes |
+| SHA-512/256 | `derive::<Sha512_256>` | 32 bytes | 128 bytes | 137,438,953,440 bytes |
+
+No PBKDF2-HMAC-SHA3: SHA-3 is not on `Digest` yet (see [SHA-3](#sha-3)).
+
+### Usage
+
+```rust
+use cryptors::{pbkdf2::{self, Error}, sha2::Sha256};
+
+// RFC 7914, section 11: 1 iteration of HMAC-SHA-256, 64 bytes of key.
+let mut key = [0; 64];
+pbkdf2::derive::<Sha256>(b"passwd", b"salt", 1, &mut key).unwrap();
+assert_eq!(key[..8], [0x55, 0xac, 0x04, 0x6e, 0x56, 0xe3, 0x08, 0x9f]);
+
+// A password hash: a random salt, stored with the key and the count, and many iterations.
+let salt = [0x42; 16]; // in a program: 16 random bytes, new for each password
+let mut stored = [0; 32];
+pbkdf2::derive::<Sha256>(b"correct horse", &salt, 600_000, &mut stored).unwrap();
+
+// A shorter key is the start of a longer one, so ask for what you need.
+let mut short = [0; 16];
+pbkdf2::derive::<Sha256>(b"correct horse", &salt, 600_000, &mut short).unwrap();
+assert_eq!(short, stored[..16]);
+
+// No iterations and no key are errors, not panics; the buffer is left untouched.
+assert_eq!(pbkdf2::derive::<Sha256>(b"correct horse", &salt, 0, &mut short), Err(Error::InvalidIterations));
+assert_eq!(pbkdf2::derive::<Sha256>(b"correct horse", &salt, 1, &mut []), Err(Error::InvalidLength));
+```
+
+`derive(password, salt, iterations, &mut key)` takes a password and salt of any length (empty included), a `u32` count,
+and the caller's key buffer of one byte to `2^32 - 1` blocks, so nothing is allocated.
+
+`examples/pbkdf2.rs` checks RFC 7914's vector, then enrolls and checks a password as a login does (random salt, 600,000
+iterations of HMAC-SHA-256): `cargo run --release --example pbkdf2`.
+
+### Security
+
+PBKDF2 is not broken: it relies on HMAC being a PRF. MD5 and SHA-1 are for older formats only; their collisions do not
+break HMAC, but avoid them in new designs. PBKDF2's only defence is the work factor: it needs almost no memory, so it
+runs at full speed on a GPU or an ASIC, unlike scrypt (RFC 7914) and Argon2 (RFC 9106). This crate has neither; prefer
+them where you can. Where a standard asks for PBKDF2, use HMAC-SHA-256 or HMAC-SHA-512.
+
+- **Use a random salt, new for each password.** It is not secret; store it with the key. RFC 8018 asks for at least 64
+  bits (section 4.1), NIST SP 800-132 for at least 128; 16 random bytes are enough.
+- **Use as many iterations as you can afford.** RFC 8018's minimum of 1,000 (section 4.2) is far too few today; OWASP's
+  password storage guidance, at the time of writing, asks for 600,000 with HMAC-SHA-256 and 210,000 with HMAC-SHA-512.
+  Store the count with the salt and raise it as hardware gets faster.
+- **Ask for one block.** An attacker needs only the first block to test a guess; the owner pays for all of them. For
+  more key material, derive HashLen bytes and expand them with [HKDF](#hkdf).
+- **Long passwords are shortened.** HMAC hashes a key longer than the hash's block (64 bytes, or 128 for SHA-384 and
+  SHA-512), so such a password gives the same key as its hash, and two passwords with the same hash share a key.
+- **Compare keys without stopping at the first difference.** The crate has no public function for it;
+  `examples/pbkdf2.rs` ORs all the differences.
+- **Zeroization is best effort.** The password-keyed `Hmac` (worth as much as the password) is overwritten on return.
+  Not wiped: the hash functions' stack values, the digests (each `U(j)`), and the caller's password and key buffers.
+
+Control flow and addresses depend only on the lengths and the iteration count, never on a password byte. Unlike ECDH,
+neither an inspection of the compiled code nor a timing measurement backs this.
+
+### Testing
+
+```sh
+cargo test pbkdf2::   # RFC 6070 and 7914, Wycheproof, and vectors from Python, Go and OpenSSL for all eight hashes
+```
+
+- **RFC 6070** (HMAC-SHA-1, without its 16,777,216-iteration case) and **RFC 7914 section 11** (HMAC-SHA-256, with the
+  80,000-iteration case).
+- **Project Wycheproof**: 59 of its 298 PBKDF2 vectors for SHA-1, SHA-224, SHA-256, SHA-384 and SHA-512 (all those
+  under 4096 iterations and one in five of the rest, to keep the debug-build test fast).
+- **All eight hashes, 216 vectors** from Python's `hashlib`, reproduced by Go's `crypto/pbkdf2` and OpenSSL 3.6:
+  passwords of 0, 1, HashLen, one block, one block + 1 and 2 blocks + 3 bytes; salts on both sides of the point where
+  `salt | INT(i)` spills into a second block; keys of 1, HashLen − 1, HashLen, HashLen + 1, 2 × HashLen, 3 × HashLen + 5
+  and 300 bytes; 1 to 1000 iterations; NUL bytes in the password and the salt.
+- **The block number**: 65,538 blocks (2 MiB of SHA-256, 1.25 MiB of SHA-1) use three of the counter's four bytes, so
+  a one-byte, 16-bit or little-endian counter fails, as does one that wraps at 8 or 16 bits.
+- **The limits**: zero iterations and an empty key are refused with the buffer untouched; the `2^32 - 1`-block ceiling
+  is checked on the numbers, since no test can allocate it.
+- **Mutation check**: each of 21 deliberate breaks of `src/pbkdf2/kdf.rs` (a missing or extra iteration, the counter,
+  the salt, the password, the XOR, the limits) is caught by at least one test.
+
+HMAC is tested in its own module; see [HMAC](#hmac).
+
+### Benchmarking
+
+```sh
+# cryptors: one test thread, so the benchmarks don't compete with each other for the CPU.
+cargo test --release pbkdf2:: -- --ignored --nocapture --test-threads=1
+cd bench/pbkdf2cmp && go test -v                # Go's crypto/pbkdf2, on its crypto/sha1, crypto/sha256 and crypto/sha512 as shipped
+```
+
+Two workloads each for SHA-1, SHA-256 and SHA-512, same inputs on both sides, each key the password of the next:
+
+- **Password hash**: a key of one hash output, 100,000 iterations, 10 derivations per pass; millions of iterations/s.
+- **One iteration**: keying HMAC plus two of its calls, 200,000 derivations per pass; operations per second.
+
+One warm-up pass, best of five timed passes. Both sides print the same last key; the Go side checks known answers first.
+PBKDF2 has no backend of its own and uses its hash's (FEAT_SHA1, FEAT_SHA256 and FEAT_SHA512 here), so `-tags purego`
+is not run: see [SHA-256](#sha-256) and [SHA-512](#sha-512) for the hashes.
+
+Apple M1 Pro, Go 1.27.1, medians of three interleaved runs, higher is better:
+
+| Workload | cryptors | Go stdlib |
+|----------|----------|-----------|
+| PBKDF2-HMAC-SHA-1, 100,000 iterations | **13.07 M/s** | 8.88 M/s |
+| PBKDF2-HMAC-SHA-256, 100,000 iterations | **12.66 M/s** | 8.93 M/s |
+| PBKDF2-HMAC-SHA-512, 100,000 iterations | **4.38 M/s** | 3.64 M/s |
+| PBKDF2-HMAC-SHA-1, one iteration | **5.46 M/s** | 2.00 M/s |
+| PBKDF2-HMAC-SHA-256, one iteration | **5.80 M/s** | 2.07 M/s |
+| PBKDF2-HMAC-SHA-512, one iteration | **2.35 M/s** | 978 k/s |
+
+Run-to-run spread was within 3%, but the machine was not idle (load average 5), so the last digit means little.
+
+- **Many iterations:** 1.2 to 1.5 times Go's rate. Both sides make two compression calls per iteration; cryptors starts
+  each from the two states saved by `Hmac::new` and XORs into the caller's buffer (not profiled further).
+- **One iteration:** 2.4 to 2.8 times. Setup dominates: keying HMAC and the first two calls, with no allocation here.
+
+No x86 figures yet: Rosetta 2 timings say nothing about real x86 hardware. The manual `Benchmarks` workflow
+(`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
+
+## Rand
+
+Rand is the operating system's cryptographically secure random number generator, the source for every key, nonce, salt
+and token. It adds nothing between the program and the system's generator, so it is exactly as strong as that. Each
+call asks the system for the bytes it needs and nothing is kept between calls, so a forked child never shares state with
+its parent and a restored virtual machine never repeats bytes it gave out. It is not a NIST SP 800-90A DRBG and has not
+been validated under FIPS 140.
+
+| Platform | Source |
+|----------|--------|
+| Linux, FreeBSD, DragonFly BSD | `getrandom(2)`; on a Linux older than 3.17, which has no such call, `/dev/urandom` |
+| macOS, iOS, tvOS, watchOS, visionOS, OpenBSD | `arc4random_buf(3)` |
+| Any other Unix (NetBSD, Android, illumos, Solaris, ...) | `/dev/urandom` |
+| Windows and every other platform | none: every call fails with `ErrorKind::Unsupported` |
+
+Four items, none generic: `Reader` (the generator as an `io::Read`), `fill(&mut buf)`, `text()` and
+`below(&mut reader, max)`. The standard library has no stable interface to the system's generator (`std::random` is
+unstable) and the crate has no dependencies, so the module declares the C library call itself. That is its only
+`unsafe`: one call with a buffer's pointer and length.
+
+### Usage
+
+```rust
+use cryptors::ecdh::{PrivateKey, X25519};
+use cryptors::rand::{self, Reader};
+
+// A 256-bit key, for AES-256 or HMAC. `fill` has no error to handle: if the system cannot give random bytes, nothing
+// after it can be secure, and it panics.
+let mut key = [0u8; 32];
+rand::fill(&mut key);
+
+// A token for a link or an API key: 26 characters of the RFC 4648 base32 alphabet (A-Z, 2-7), 130 bits.
+let token = rand::text();
+assert_eq!(token.len(), 26);
+
+// `Reader` is what the keys of the crate take as their source of randomness. It returns an error rather than panic.
+let alice = PrivateKey::<X25519>::generate(&mut Reader).unwrap();
+let bob = PrivateKey::<X25519>::generate(&mut Reader).unwrap();
+assert_eq!(
+    alice.diffie_hellman(bob.public_key()).unwrap().as_bytes(),
+    bob.diffie_hellman(alice.public_key()).unwrap().as_bytes()
+);
+
+// A uniform number in 0..max, with no bias: a die, the index of an item to draw. Any reader will do, so a test can give
+// it fixed bytes: 0xff is masked to 7, which is not below 6, so it is drawn again, and 0x04 is.
+assert!((1..=6).contains(&(rand::below(&mut Reader, 6).unwrap() + 1)));
+assert_eq!(rand::below(&mut &[0xff, 0x04][..], 6).unwrap(), 4);
+```
+
+`below(rng, max)` reads the fewest bytes that hold `max - 1`, clears the first byte's bits above the highest one bit of
+`max - 1`, and draws again if the result is not below `max`. A draw is refused with probability under a half, so fewer
+than two draws are needed on average, and every number is equally likely. `value % max` is not uniform: a byte modulo 6
+gives each of 0 to 3 in 43 cases of 256, and 4 and 5 in 42. `below` fails with `InvalidData` after 128 refused draws in
+a row (a stuck reader), panics on a `max` of zero, and reads nothing for a `max` of 1.
+
+With no public big integer in the crate, there is no random integer of any size and no random prime; `below` covers
+numbers up to `2^64 - 1`. ([RSA](#rsa) draws its primes from a reader internally.)
+
+`examples/rand.rs` fills a key, prints tokens, rolls a die 60,000 times and checks the faces, shuffles a deck with
+`below`, and agrees on an X25519 secret between keys from `Reader`: `cargo run --release --example rand`.
+
+### Security
+
+- **Take every key, nonce and salt from here; never fall back to anything predictable.** The time, a process number,
+  an address, or a hash of them can be guessed. If the system cannot answer, stop: `fill` and `text` panic; `Reader`
+  and `below` return the error, for a program that must clean up first.
+- **It fails only where the system does.** `getrandom` does not fail a valid request; with no flags it waits only while
+  the kernel gathers its initial entropy, once, at boot. A sandbox that forbids the call (`EPERM`) is an error for the
+  caller, not a reason to read a file; only `ENOSYS` (a Linux before 3.17) falls back to `/dev/urandom`.
+- **A text is a secret, not a password a person types.** 130 bits suits a token, not something read aloud. A password
+  chosen by a person goes through [PBKDF2](#pbkdf2), a key-agreement secret through [HKDF](#hkdf); neither is uniform.
+- **Zeroization.** `text` and `below` overwrite the bytes they drew (secret until they become a character or a number)
+  before returning; `fill` writes the caller's buffer, which the caller must wipe.
+
+No secret random byte is a branch condition or a memory address, except that `below` redraws an out-of-range number.
+The number of draws shows in the timing but says nothing about the result: a refused draw is thrown away, and the next
+is independent of it. The system's generator, and its quality, are outside the crate.
+
+### Testing
+
+```sh
+cargo test rand::   # the fill loop, the output's statistics, the text, `below` and its known answers, the /dev/urandom route
+```
+
+A generator meant to be unpredictable has no test vectors, so the tests check what can be checked:
+
+- **The fill loop**: calls that return one byte at a time or are interrupted are retried for what is left; calls that
+  return nothing, claim to have written too much, or fail give an error, not a loop or a panic.
+- **Every length from empty to four megabytes** is filled to the last byte and not past it (guard bytes on both sides),
+  and each page of a four-megabyte buffer is written.
+- **The output**: a megabyte has every byte value about equally often (chi-square) and as many one bits as zero bits,
+  within six standard deviations; a thousand 32-byte draws are all different, as are those of eight threads. A stuck,
+  constant or short generator fails these.
+- **`text`** maps each of the 256 byte values to the character of its low five bits in RFC 4648's table; 4000 tokens
+  have 26 characters, all in the alphabet, each about equally often.
+- **`below`** matches another implementation of the algorithm on 22 inputs (bounds from 1 to `2^64 - 1`, refused
+  draws, bytes left unread), reading the same bytes. It is uniform for a bound a modulo would bias, and fails with the
+  reader's error, with `UnexpectedEof`, and after exactly 128 refused draws.
+- **`/dev/urandom`** is tested on every Unix, whichever route the machine takes. On Linux the fallback was run under a
+  seccomp filter making `getrandom` fail with `ENOSYS`; with `EPERM` instead, the tests fail, as they should.
+- **Mutation check**: each of 19 deliberate breaks of `src/rand/` (the mask, the comparison, the length, the character
+  mapping, the number of draws, the short-write loop, the retry, the fallback) is caught by at least one test, except
+  one that changes nothing observable (a byte of a buffer overwritten before it is read).
+
+The tests run on the project's Linux machines (x86-64, Arm, and RISC-V under emulation) and on macOS. The FreeBSD,
+DragonFly BSD and OpenBSD calls are written from their manuals and have not been run; Windows is not supported.
+
+### Benchmarking
+
+```sh
+# cryptors: one test thread, so the benchmarks don't compete with each other for the CPU.
+cargo test --release rand:: -- --ignored --nocapture --test-threads=1
+cd bench/randcmp && go test -v                  # Go's crypto/rand.Read
+```
+
+Five buffer sizes, filled in place, the same on both sides: 16, 32 and 256 bytes (200,000 calls per pass, per-call cost
+in operations per second), 4 KiB (20,000 calls) and 1 MiB (100 calls) (per-byte cost in MiB/s). One warm-up pass, best
+of five timed passes. Random output cannot be compared, so the Go side checks that the buffers are filled and look
+random, and replays the Rust tests' `below` table against `rand.Int`.
+
+Apple M1 Pro, Go 1.27.1, medians of three interleaved runs, higher is better. Both sides call `arc4random_buf` on macOS:
+
+| Buffer | cryptors | Go stdlib |
+|--------|----------|-----------|
+| 16 bytes | **4.44 M/s** | 3.79 M/s |
+| 32 bytes | **4.34 M/s** | 3.71 M/s |
+| 256 bytes | **3.70 M/s** (904 MiB/s) | 3.23 M/s (790 MiB/s) |
+| 4 KiB | **3,099 MiB/s** | 3,041 MiB/s |
+| 1 MiB | 3,041 MiB/s | 3,046 MiB/s |
+
+Run-to-run spread was within 4%, with the machine not idle (load average 5).
+
+- **Small buffers:** 1.15 to 1.17 times Go's rate. The system call is the same; only the code around it differs, and
+  nothing was profiled.
+- **Large buffers:** 1.02 times at 4 KiB and no gain at 1 MiB: the time is the generator's.
+
+On Linux both sides call `getrandom(2)`, so the figures there are the kernel's; no x86 or Linux figures have been
+measured. The manual `Benchmarks` workflow (`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm
+runners.
+
+## RC4
+
+RC4 (also ARC4 or ARCFOUR) is the stream cipher Ron Rivest designed in 1987, as described in Bruce Schneier's *Applied
+Cryptography*. The key sets up the state, and each step makes one keystream byte, XORed with the message: encrypting and
+decrypting are the same operation.
+
+**RC4 is broken.** Use it only to read existing data or talk to legacy systems. For anything new, use [AES](#aes).
+
+| Cipher | Type | Key | State | Output |
+|--------|------|-----|-------|--------|
+| RC4 | `Rc4` | 1 to 256 bytes | 256 bytes | one byte per step |
+
+### Usage
+
+```rust
+use cryptors::rc4::Rc4;
+
+// Wikipedia's example: the key "Wiki" and the text "pedia".
+let mut cipher = Rc4::new(b"Wiki").unwrap();
+let mut data = *b"pedia";
+cipher.apply_keystream(&mut data);
+assert_eq!(data, [0x10, 0x21, 0xbf, 0x04, 0x20]);
+
+// Decrypting is the same operation, with a fresh cipher: the keystream starts again.
+Rc4::new(b"Wiki").unwrap().apply_keystream(&mut data);
+assert_eq!(&data, b"pedia");
+
+// The keystream goes on from one call to the next, so a message can be processed in pieces of any size.
+let mut cipher = Rc4::new(b"Wiki").unwrap();
+let mut message = *b"pedia";
+let (head, tail) = message.split_at_mut(2);
+cipher.apply_keystream(head);
+cipher.apply_keystream(tail);
+assert_eq!(message, [0x10, 0x21, 0xbf, 0x04, 0x20]);
+
+// RFC 4345 (arcfour256) throws away the first 1536 bytes of the keystream.
+let mut cipher = Rc4::new(b"Wiki").unwrap();
+cipher.apply_keystream(&mut [0; 1536]);
+
+// `xor_keystream` leaves the plaintext as it was and writes to another buffer.
+let mut ciphertext = [0; 5];
+cipher.xor_keystream(&mut ciphertext, b"pedia");
+
+// A key of the wrong size is refused.
+assert!(Rc4::new(&[]).is_err());
+assert!(Rc4::new(&[0; 257]).is_err());
+```
+
+### Security
+
+- **The keystream is biased.** The second byte is zero twice as often as it should be (Mantin and Shamir, 2001), and
+  more biases follow. A plaintext sent again and again under many keys (a cookie, a password) can be counted out of the
+  ciphertexts: AlFardan et al. (2013) and Vanhoef and Piessens (2015) did it to TLS and WPA-TKIP, and RFC 7465 (2015)
+  forbids RC4 in TLS.
+- **Related keys give related keystreams.** Fluhrer, Mantin and Shamir (2001) broke WEP, whose key was a counter
+  followed by the same secret.
+- **Discarding the start helps a little.** RFC 4345 throws away the first 1536 bytes, as the example does; other biases
+  stay.
+
+Using it:
+
+- **There is no nonce.** One key is one keystream, so two messages under it reveal the XOR of the plaintexts: use a key
+  once. Nothing is authenticated either: a flipped ciphertext bit flips the same plaintext bit. `examples/rc4.rs` shows
+  both.
+- **Not constant-time.** The key schedule and the generator index a 256-byte table by secret state, which cache timing
+  can leak. RC4 allows nothing else.
+- **The state is wiped on drop, best effort**, and hidden from `Debug`. Stack copies and copies left by moves are out of
+  reach; build the cipher where it will stay.
+- **`Rc4` is not `Clone`**: a copy would repeat the keystream.
+
+### Testing
+
+```sh
+cargo test rc4::   # RFC 6229, the vectors of the 1994 posting, every length of key, a message in pieces
+```
+
+- **`rfc_6229`:** all 252 vectors of the RFC (14 keys of 40 to 256 bits, 16 keystream bytes at each of 18 offsets up to
+  4096), read from `src/rc4/testdata/rfc6229.txt`; Go's `crypto/rc4` agrees with every line.
+- **`known_answers`:** the vectors of the 1994 posting that first published the algorithm (also in Go's tests), and
+  Wikipedia's three examples.
+- **`every_key_length`:** the SHA-256 of 300 keystream bytes for each key length from 1 to 256, agreed by Go and a
+  Python implementation; the only test of the lengths between the RFC's.
+- **`pieces_match_the_whole`:** a message split at every point and into runs of many lengths, so the indices must carry
+  over between calls.
+
+### Benchmarking
+
+```sh
+# cryptors: one test thread, so the benchmarks don't compete with each other for the CPU.
+cargo test --release rc4:: -- --ignored --nocapture --test-threads=1
+cd bench/rc4cmp && go test -v                        # Go's crypto/rc4, which has no assembly and so no purego run
+```
+
+Both sides XOR 32 MiB in place in one call, with a 16-byte key `00 01 02 ...` and the keystream running on between
+passes. Best of five passes after a warm-up. Both print the same first bytes, which OpenSSL also computes.
+
+Apple M1 Pro, medians of five interleaved runs, in MiB/s:
+
+| Workload | cryptors | Go stdlib |
+|----------|----------|-----------|
+| RC4 | **1112.1** | 1011.3 |
+
+Each step depends on the one before, so the chain of loads and stores sets the speed. Go keeps the state in 32-bit
+words; here it is bytes.
+
+No x86 figures yet: nothing here can time real x86 hardware. The manual `Benchmarks` workflow
+(`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
+
+## RSA
+
+RSA encrypts a message to the holder of a private key, and lets the holder sign a message that anyone with the public key
+can check. Its public keys are in almost every X.509 certificate, its signatures are TLS 1.2's and the JWT algorithms
+`RS256` and `PS256`, and its encryption wraps the keys of CMS, S/MIME and JWE. [RFC 8017](https://www.rfc-editor.org/info/rfc8017)
+(PKCS #1 v2.2) turns its one operation, a power modulo the product of two primes, into four schemes:
+
+| Scheme | For | With the public key | With the private key | Defined in |
+|--------|-----|---------------------|----------------------|------------|
+| RSAES-OAEP | encryption | `encrypt_oaep`, `encrypt_oaep_mgf1` | `decrypt_oaep`, `decrypt_oaep_mgf1` | section 7.1 |
+| RSASSA-PSS | signatures | `verify_pss`, `verify_pss_prehash` | `sign_pss`, `sign_pss_prehash` | section 8.1 |
+| RSAES-PKCS1-v1_5 | encryption, for old protocols | `encrypt_pkcs1v15` | `decrypt_pkcs1v15`, `decrypt_pkcs1v15_session_key` | section 7.2 |
+| RSASSA-PKCS1-v1_5 | signatures, as most certificates have them | `verify_pkcs1v15`, `verify_pkcs1v15_prehash` | `sign_pkcs1v15`, `sign_pkcs1v15_prehash` | section 8.2 |
+
+- It is neither a `Digest` nor a `BlockCipher`. There are two types, `PublicKey` and `PrivateKey`, with a method for each
+  scheme, and no type parameter but the hash: any `Digest` for OAEP and PSS, one of the eight of the sealed trait
+  `Pkcs1Hash` (MD5, SHA-1 and the six SHA-2 functions) for a PKCS #1 v1.5 signature, which carries the hash's name.
+- A key has two primes and a modulus of 1,024 to 16,384 bits, and an odd public exponent from 3 to 2^31 - 1 (65,537 for
+  the keys it generates). The sizes and what they hold:
+
+| Modulus | Security (NIST SP 800-57) | Ciphertext and signature | OAEP with SHA-256 holds | PKCS #1 v1.5 holds |
+|---------|---------------------------|--------------------------|-------------------------|--------------------|
+| 1,024 bits | 80 bits: old data only | 128 bytes | 62 bytes | 117 bytes |
+| 2,048 bits | 112 bits | 256 bytes | 190 bytes | 245 bytes |
+| 3,072 bits | 128 bits | 384 bytes | 318 bytes | 373 bytes |
+| 4,096 bits | about 140 bits | 512 bytes | 446 bytes | 501 bytes |
+| 7,680 bits | 192 bits | 960 bytes | 894 bytes | 949 bytes |
+| 15,360 bits | 256 bits | 1,920 bytes | 1,854 bytes | 1,909 bytes |
+
+RSA carries a key, not a document: it encrypts a few hundred bytes at most, so a message goes under a symmetric key that
+RSA delivers, and a document is signed by signing its hash.
+
+Standards:
+
+- Schemes: RFC 8017 sections 7 and 8, with the encodings of section 9 (`EMSA-PSS`, `EMSA-PKCS1-v1_5`) and MGF1 (appendix
+  B.2.1). The private operation uses the second representation of a private key (section 3.2), with the Chinese
+  remainder theorem.
+- Key generation: [FIPS 186-5](https://csrc.nist.gov/pubs/fips/186-5/final) appendix A.1, drawn from a reader as
+  [c2sp.org/det-keygen](https://c2sp.org/det-keygen) specifies, so a deterministic reader gives the same key as any other
+  implementation of it.
+- Keys are numbers: big-endian bytes for the modulus, the exponent and the private key's components. The encodings that
+  carry them (PKCS #1's `RSAPrivateKey`, PKCS #8, SubjectPublicKeyInfo) are ASN.1, which the crate has no parser for yet
+  (X.509 is planned).
+- Left out: keys of more than two primes, PSS with a hash for MGF1 other than the message's (OAEP has it), and PKCS #1 v1.5
+  signatures with SHA-3 (not a `Digest` yet; the `_prehash` forms need a name that `Pkcs1Hash` does not have).
+
+### Usage
+
+```rust
+use cryptors::rsa::{Error, PrivateKey, PublicKey, SaltLength};
+use cryptors::sha1::Sha1;
+use cryptors::sha2::Sha256;
+
+fn unhex(s: &str) -> Vec<u8> {
+    (0..s.len() / 2).map(|i| u8::from_str_radix(&s[2 * i..2 * i + 2], 16).unwrap()).collect()
+}
+
+// The first key of RSA Laboratories' PKCS #1 test vectors, 1,024 bits: the modulus, the private exponent and the primes.
+let key = PrivateKey::from_components(
+    &unhex(concat!(
+        "a8b3b284af8eb50b387034a860f146c4919f318763cd6c5598c8ae4811a1e0abc4c7e0b082d693a5e7fced675cf4668512772c0cbc64a742",
+        "c6c630f533c8cc72f62ae833c40bf25842e984bb78bdbf97c0107d55bdb662f5c4e0fab9845cb5148ef7392dd3aaff93ae1e6b667bb3d424",
+        "7616d4f5ba10d4cfd226de88d39f16fb"
+    )),
+    65537,
+    &unhex(concat!(
+        "53339cfdb79fc8466a655c7316aca85c55fd8f6dd898fdaf119517ef4f52e8fd8e258df93fee180fa0e4ab29693cd83b152a553d4ac4d181",
+        "2b8b9fa5af0e7f55fe7304df41570926f3311f15c4d65a732c483116ee3d3d2d0af3549ad9bf7cbfb78ad884f84d5beb04724dc7369b31de",
+        "f37d0cf539e9cfcdd3de653729ead5d1"
+    )),
+    &unhex("d32737e7267ffe1341b2d5c0d150a81b586fb3132bed2f8d5262864a9cb9f30af38be448598d413a172efb802c21acf1c11c520c2f26a471dcad212eac7ca39d"),
+    &unhex("cc8853d1d54da630fac004f471f281c7b8982d8224a490edbeb33d3e3d5cc93c4765703d1dd791642f1f116a0dd852be2419b2af72bfe9a030e860b0288b5d77"),
+).unwrap();
+
+// The sender has only the public key's numbers, and encrypts with OAEP. The "random" seed here is the vector's own, so
+// that the ciphertext is the vector's too.
+let public = PublicKey::new(&key.public_key().modulus(), key.public_key().exponent()).unwrap();
+let message = unhex("6628194e12073db03ba94cda9ef9532397d50dba79b987004afefe34");
+let mut seed: &[u8] = &unhex("18b776ea21069d69776a33e96bad48e1dda0a5ef");
+let ciphertext = public.encrypt_oaep::<Sha1, _>(&mut seed, &message, b"").unwrap();
+assert_eq!(ciphertext[..16], unhex("354fe67b4a126d5d35fe36c777791a3f")[..]);
+
+// The holder decrypts with the same hash and label; anything else is the same error.
+assert_eq!(key.decrypt_oaep::<Sha1>(&ciphertext, b""), Ok(message));
+assert_eq!(key.decrypt_oaep::<Sha1>(&ciphertext, b"other"), Err(Error::Decryption));
+
+// PSS is randomized (here with a fixed string for the random bytes); PKCS #1 v1.5 is deterministic.
+let mut noise: &[u8] = &[7; 32];
+let signature = key.sign_pss::<Sha256, _>(&mut noise, b"a message", SaltLength::EqualsHash).unwrap();
+assert_eq!(public.verify_pss::<Sha256>(b"a message", &signature, SaltLength::EqualsHash), Ok(()));
+assert_eq!(public.verify_pss::<Sha256>(b"another", &signature, SaltLength::EqualsHash), Err(Error::VerificationFailed));
+let signature = key.sign_pkcs1v15::<Sha256>(b"a message").unwrap();
+assert_eq!(public.verify_pkcs1v15::<Sha256>(b"a message", &signature), Ok(()));
+```
+
+Real keys come from `PrivateKey::generate`. The randomness is a reader, as everywhere else in the crate:
+
+```rust
+use cryptors::rand::Reader;
+use cryptors::rsa::PrivateKey;
+use cryptors::sha2::Sha256;
+
+let mut rng = Reader;                                       // the operating system's; any io::Read of random bytes will do
+let key = PrivateKey::generate(&mut rng, 2048)?;
+let ciphertext = key.public_key().encrypt_oaep::<Sha256, _>(&mut rng, b"a 32-byte session key goes here", b"")?;
+assert_eq!(key.decrypt_oaep::<Sha256>(&ciphertext, b"").unwrap(), b"a 32-byte session key goes here");
+```
+
+`examples/rsa.rs` checks a known answer, generates a key, sends a secret with OAEP to the holder of its public numbers and
+authenticates a message with it, signs with PSS and PKCS #1 v1.5, stores and restores a key, and shows each failure:
+
+```sh
+cargo run --release --example rsa
+```
+
+### Security
+
+RSA does not resist a large quantum computer (Shor's algorithm factors the modulus); what must stay secret past one needs a
+post-quantum scheme such as [ML-KEM](#ml-kem) or [ML-DSA](#ml-dsa).
+
+- **Use OAEP and PSS in a new design.** PKCS #1 v1.5 encryption has no integrity check in its padding, and a service that
+  says whether a ciphertext decrypts hands out the decryption of any ciphertext (Bleichenbacher, 1998, and the same attack
+  on implementations again and again since, for TLS and for XML encryption). It is here to read old data.
+  `decrypt_pkcs1v15_session_key` is the protection of RFC 3218 for the protocols that cannot move: it replaces a key you
+  already hold, or leaves it, and does not say which.
+- **One error for every failed decryption.** `Error::Decryption` does not say whether the ciphertext was short, large,
+  had another label or a broken padding, and the checks of the padding take the same time whichever fails. A program
+  that tells its peer more, by a message or by a delay, rebuilds the oracle of Manger's attack on OAEP.
+- **A PKCS #1 v1.5 signature is rebuilt, not parsed.** The block is made again from the digest and compared, which is
+  what keeps out the forgeries of the verifiers that read the `DigestInfo` leniently (Bleichenbacher, 2006; Mozilla's NSS,
+  2014). A signature whose number is not below the modulus, or is not as long as it, is refused.
+- **The randomness is the caller's.** A key from a predictable reader is guessable, and an OAEP ciphertext or a PSS
+  signature made from one is not randomized. `rand::Reader` is the operating system's.
+- **Sizes.** Keys under 1,024 bits are refused and 2,048 bits is the floor of NIST's guidance; the cap of 16,384 is so
+  that a key from outside cannot make a verification take minutes. A key is for one purpose (FIPS 186-5, SP 800-56B):
+  the types do not stop a program from signing and decrypting with one, and it should not.
+- **Pick the hash on purpose.** SHA-256 and up. The hash of a v1.5 signature includes MD5 and SHA-1 for the signatures
+  that still use them, and is only as strong as they are. For OAEP with another hash for MGF1 than for the label (some
+  protocols fix it to SHA-1) there is `encrypt_oaep_mgf1`; use `encrypt_oaep` if you have the choice.
+- **A fault does not give the key away.** The result of a private operation is raised to the public exponent and compared
+  with its input before it is released, so a bit flipped in one of the two exponentiations of the Chinese remainder
+  theorem (which would make a signature that reveals a prime, Boneh, DeMillo and Lipton, 1997) fails instead. There is no
+  blinding: the operation takes the same time for every input, so there is nothing to hide.
+- **Constant-time where it matters, checked by inspection and a coarse test.** Nothing that depends on a private key is
+  used as a branch condition or a memory address in the private operation or the padding checks of a decryption: the
+  exponentiation reads every entry of its table, and every choice between two numbers is a selection by a mask.
+  `rustc`'s assembly for aarch64 and x86_64 was inspected for the product, the table lookup of the exponentiation and the
+  search for the message in a decrypted block, and its conditional jumps there are loops over public lengths and checks of
+  public lengths; the masks go through `black_box`, and the selections are conditional moves and bit operations. A coarse test in the manner of dudect (`timing_does_not_depend_on_the_input`, run by hand on a quiet machine) compared 6,000 private
+  operations on inputs with little in them with 6,000 on random ones: the means differed by under 0.05% and Welch's t stayed
+  under 2.4 in three runs (dudect's threshold is 4.5). That is one
+  compiler's output for two targets, and a measurement on one machine; nothing protects against power analysis or fault
+  injection that skips the check. Key generation is not constant-time (it is a search: refused candidates, trial division
+  and Miller-Rabin rounds are visible, never the key it ends with), and neither is verification, which has no secret.
+- **Key wiping is best effort.** A private key's numbers, and the temporaries of the operations and of key generation, are
+  overwritten with zeros when they are dropped (checked by an allocator that looks for them in freed memory). Values on
+  the stack and in registers are not wiped, nor are copies left by moves; the bytes returned by `d()`, `p()` and the like
+  are the caller's.
+
+### Testing
+
+```sh
+cargo test rsa::    # known answers, Wycheproof, the arithmetic against Python's integers, and key generation against other implementations
+```
+
+| Source | Coverage |
+|--------|----------|
+| Project Wycheproof | 75 files of OAEP and PKCS #1 v1.5 decryption, PKCS #1 v1.5 signatures (verification and generation) and PSS verification: 8,043 cases that this module can read, all passed once; 759 kept in the tests (every kind of fault in every file that matters) |
+| RSA Laboratories' PKCS #1 vectors | OAEP examples: the ciphertext of each message from the vector's own seed, bit for bit. PSS: 60 signatures by keys of 1,024 to 1,031 bits, 1,536 and 2,048, verified and reproduced from their salts; the keys of 1,025 to 1,031 bits are the ones whose encoded message is a byte shorter than the modulus or has bits to clear |
+| OpenSSL | 315 ciphertexts and signatures (OAEP with every hash and a label, v1.5 encryption, v1.5 signatures with all eight hashes, PSS with the salt lengths protocols use) under keys of 1,024, 1,025, 1,031, 2,047, 2,048, 3,072 and 4,096 bits; v1.5 signatures are reproduced exactly. `bench/rsacmp` checks Go reads them the same way |
+| [c2sp.org/det-keygen](https://c2sp.org/det-keygen) | 21 key-generation seeds of 2,048, 2,064, 3,072, 4,096 and 8,192 bits: the key an HMAC_DRBG makes the process give, to the last bit of `d` |
+| [c2sp.org/CCTV/keygen](https://c2sp.org/CCTV/keygen) | the benchmark's 708 candidates of 2,048 bits: the primes are the 354th and the last, and the key has the modulus and private exponent that Python and Go make |
+| Arithmetic | products, powers and remainders against Python's integers for moduli of 1 to 32 limbs (all ones, a power of two plus one, a top limb of 1, a top limb with its high bits clear) and remainders modulo even numbers |
+| Keys wrong in exactly one way | primes too close, a private exponent too short, a composite `p`, a modulus that is not `p * q`; and streams of candidates that make generation draw again: for a shared factor of 40 bits in `p - 1` and `q - 1`, for a `p - 1` that the public exponent divides, and for the same prime twice |
+
+Wycheproof's files cover paddings of every wrong shape, BER lengths and missing NULLs in a `DigestInfo`, tiny and huge
+signature values, ciphertexts of the wrong length, special salt lengths, and keys of odd sizes. 
+Mutation testing: 195 mutants of the code (the Montgomery product and its constants, the exponentiations, the reductions, every
+check of a key, the private operation, the four paddings and MGF1, the hash prefixes, key generation, and the wiping of each
+buffer that holds a secret). 154 fail a test and 27 hang the suite, because key generation never ends on broken arithmetic. The
+14 survivors are equivalent to the original: a check made twice in two places (the size of the key in OAEP, the digest's length
+in PSS, the block that a v1.5 signature is compared with), a relaxed assertion, an exponent of 2 that the parity check refuses
+anyway, a mask that the length check makes redundant (the session key, the search in the padding), the trial division that
+Miller-Rabin repeats, the mask of a Miller-Rabin base that its range check repeats, the check of the modulus's size that the
+shape of a candidate guarantees, and a modular inverse that takes smaller steps.
+
+Everything this implementation makes was also read by others, once: 1,528 ciphertexts and signatures (every scheme, hash and
+key size of the tests, with and without labels and salts) decrypt or verify with OpenSSL (1,304 of them; it has no OAEP with
+SHA-512/224 or SHA-512/256) and with Go, which also reproduces the v1.5 signatures byte for byte. The tests run on x86-64
+(under Rosetta) as well as Arm.
+
+The tests also check:
+
+- every scheme round-trips on keys of 1,024, 1,025, 1,031, 2,047 and 2,048 bits, at the longest message and with none;
+- every error of a decryption is the same error, and so is every error of a verification, for ciphertexts and signatures
+  that are too short, too long, equal to or above the modulus, zero, and changed in any byte;
+- a private operation whose result fails the check releases nothing, whichever number of the key was damaged;
+- the private operation makes the same number of Montgomery products for any input, and the exponentiation for any exponent;
+- `Debug` shows no secret, and a dropped key, the temporaries of its use and of its generation leave nothing behind.
+
+### Benchmarking
+
+```sh
+# cryptors: one test thread, so the benchmarks don't compete with each other for the CPU.
+cargo test --release rsa::keypair -- --ignored --nocapture --test-threads=1
+cd bench/rsacmp && go test -v -run TestThroughput               # Go's crypto/rsa as shipped, with its assembly
+cd bench/rsacmp && go test -tags purego -v -run TestThroughput  # Go's portable code, with no assembly
+```
+
+Method:
+
+- Keys: three of OpenSSL's (`src/rsa/testdata/interop.txt`) of 2,048, 3,072 and 4,096 bits, which both sides read from there.
+- Operations, as in Go's own benchmarks of `crypto/rsa`: a new private key (checks its numbers and makes the ones of the
+  Chinese remainder theorem), OAEP and PKCS #1 v1.5 decryption and encryption of a message of 13 bytes, signing and
+  verifying the SHA-256 digest of "testing" with PKCS #1 v1.5 and with PSS (salt as long as the hash), and, for 2,048 bits,
+  generating a key from the 708 candidates of c2sp.org/CCTV/keygen's benchmark, so that both searches are the same.
+- Each runs about 50 ms to size a batch of about 100 ms; best of five batches.
+- The randomized operations read a cheap generator on both sides (`GODEBUG=cryptocustomrand=1` for Go), so the system RNG's
+  cost is excluded.
+- All three runs print the same first 8 bytes of the PKCS #1 v1.5 signature.
+
+| Operation | cryptors | Go stdlib | Go portable (`purego`) |
+|-----------|----------|-----------|------------------------|
+| 2048 new private key | 714.4 | **585.6** | 690.7 |
+| 2048 OAEP decrypt | 964.2 | **890.0** | 1105.0 |
+| 2048 OAEP encrypt | **27.4** | 29.2 | 39.7 |
+| 2048 sign PKCS1v15 | 964.2 | **921.2** | 1131.6 |
+| 2048 verify PKCS1v15 | **27.1** | 28.6 | 37.1 |
+| 2048 sign PSS | 967.1 | **911.4** | 1125.4 |
+| 2048 verify PSS | **27.5** | 29.2 | 39.1 |
+| 3072 new private key | 1956.4 | **1582.6** | 1931.2 |
+| 3072 OAEP decrypt | 2997.4 | **2567.2** | 3280.6 |
+| 3072 OAEP encrypt | **58.6** | 83.0 | 86.1 |
+| 3072 sign PKCS1v15 | 3007.0 | **2622.4** | 3334.3 |
+| 3072 verify PKCS1v15 | **58.1** | 82.0 | 81.9 |
+| 3072 sign PSS | 2996.4 | **2611.8** | 3325.0 |
+| 3072 verify PSS | **59.0** | 83.0 | 85.0 |
+| 4096 new private key | 4224.5 | **3342.4** | 4179.6 |
+| 4096 OAEP decrypt | 6837.8 | **5621.3** | 7310.7 |
+| 4096 OAEP encrypt | **107.2** | 142.8 | 147.1 |
+| 4096 sign PKCS1v15 | 6852.2 | **5760.5** | 7384.5 |
+| 4096 verify PKCS1v15 | **106.6** | 141.9 | 141.7 |
+| 4096 sign PSS | 6837.6 | **5723.7** | 7417.7 |
+| 4096 verify PSS | **107.2** | 142.9 | 145.5 |
+| 2048 generate key (ms) | 56.1 | **52.7** | 64.9 |
+
+Apple M1 Pro, Go 1.27.1, medians of five interleaved runs, µs per operation (lower is better; the last row is in ms):
+
+- PKCS #1 v1.5 decryption and encryption are within 1% of OAEP's at every size, and signing with PKCS #1 v1.5 and with PSS
+  differ by under 1% too: the padding is nothing beside the exponentiation.
+- The public operations (encrypt, verify) are 6% faster than Go's at 2,048 bits and 25 to 30% faster at 3,072 and 4,096,
+  where Go's assembly does not apply (it has it for numbers of 1,024, 1,536 and 2,048 bits only) and its speed is about the
+  `purego` column's.
+- The private operations (decrypt, sign) are 5 to 8% slower than Go's at 2,048 bits, 15 to 17% at 3,072 and 19 to 22% at
+  4,096, against its assembly (the primes of 1,024, 1,536 and 2,048 bits are the sizes it has), and 6 to 15% faster than its
+  portable code, which is the like-for-like comparison. The product is Montgomery's with both halves of a round in one
+  pass and two carries: about 0.64 ns per multiply-add, 2 cycles, with around ten instructions for each.
+- A new private key costs 22 to 26% more than Go's. A new public key, which sets up the constants of the modulus, is 12, 25
+  and 45 µs, and is paid once per key; Go pays it in every call that uses one.
+- Key generation takes 7% longer than Go's, from the same candidates.
+
+Not done yet, would make it faster:
+
+- A squaring that uses the symmetry of the product: it saves a quarter of the multiplications, but its reduction has one
+  carry chain where the product has two, which ran about a fifth slower per multiplication when the product was written that
+  way. An estimate that it gains nothing, not a measurement of a squaring.
+- Unrolled kernels for the sizes of 1,024 to 2,048 bits, as Go's assembly is, and an x86-64 kernel with `mulx` and `adx`.
+- The checks of a new private key: the remainders modulo `p - 1` and `q - 1` are made a bit at a time, which is simple and
+  constant-time and could use the Montgomery product.
+
+
+No x86 figures yet: nothing here can time real x86 hardware, and Rosetta 2 timings say nothing about an x86 CPU. The
+manual `Benchmarks` workflow (`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
 
 ## SHA-1
 
-SHA-1, specified in [RFC 3174](https://www.rfc-editor.org/info/rfc3174), is a cryptographic hash function that
-takes an arbitrary-length message (up to 2^64 - 1 bits) and produces a 160-bit (20-byte) digest.
+SHA-1 ([RFC 3174](https://www.rfc-editor.org/info/rfc3174)) hashes a message of up to 2^64 - 1 bits into a 160-bit
+(20-byte) digest.
 
 ### Usage
 
@@ -2234,20 +2802,9 @@ assert_eq!(digest[0], 0xa9);
 
 ### Security
 
-SHA-1 is cryptographically broken, for several reasons:
-
-- **Collision attacks.** In 2017, the SHAttered attack produced the first practical SHA-1 collision, and
-  chosen-prefix collisions (letting an attacker pick the content of both colliding messages) followed in 2020.
-- **Insufficient diffusion/strength.** Cryptanalysis has repeatedly reduced the cost of finding collisions far
-  below the ~2^80 operations a 160-bit digest should require (the birthday bound), undermining the core guarantee
-  of a hash function.
-- **No collision resistance means no integrity guarantee.** Any use case relying on SHA-1 to prove a file or
-  message hasn't been tampered with can be defeated by an attacker able to produce a second input with the same
-  hash.
-
-As a result, SHA-1 **must not** be used for digital signatures, certificate signing, password hashing, or any
-other context requiring collision resistance. Major browsers and certificate authorities have deprecated it, and
-algorithms like SHA-256 or SHA-3 should be used instead.
+SHA-1 is broken. Practical collisions exist (SHAttered, 2017), and chosen-prefix collisions since 2020, at a cost far
+below the 2^80 birthday bound. **Do not** use it for signatures, certificates, password hashing, or anything that needs
+collision resistance; use SHA-256 or SHA-3 instead.
 
 ### Testing
 
@@ -2262,33 +2819,26 @@ cargo test --release sha1 -- --ignored --nocapture --test-threads=1   # cryptors
 cd bench/sha1cmp && go test -v                           # the Go stdlib counterpart
 ```
 
-On an Apple M1 Pro, against Go's `crypto` package on the same machine:
+Apple M1 Pro:
 
 | Workload | cryptors scalar | cryptors accelerated | Go stdlib |
 |----------|-----------------|----------------------|-----------|
 | One 64 MiB message | ~790 MiB/s | **2143 MiB/s** (FEAT_SHA1) | 2365 MiB/s |
 
-The x86 SHA-NI backend is verified for correctness only; it has not been benchmarked on an x86 CPU.
+The x86 SHA-NI backend is tested for correctness only, not benchmarked.
 
 ## SHA-256
 
-SHA-224 and SHA-256, specified in [FIPS 180-4](https://csrc.nist.gov/pubs/fips/180-4/upd1/final), are the two
-32-bit members of the SHA-2 family, which NIST introduced in 2001 as the successor to SHA-1. They are built the
-same way as SHA-1 and MD5 before them — a Merkle-Damgard construction, in which a fixed-size compression function
-folds the padded message in one block at a time — but with a much larger and better-mixed compression function.
-Decades of cryptanalysis have not produced a practical attack on either.
+SHA-224 and SHA-256 are the 32-bit SHA-2 functions ([FIPS 180-4](https://csrc.nist.gov/pubs/fips/180-4/upd1/final)):
+Merkle-Damgard hashes with a 64-byte block.
 
-FIPS 180-4 defines six functions in the family. This crate implements all of them; the two that share the 32-bit
-algorithm are described here:
+| Function | Output | Block |
+|----------|--------|-------|
+| SHA-224 | 28 bytes | 64 bytes |
+| SHA-256 | 32 bytes | 64 bytes |
 
-| Function | Output | Block | Initial state |
-|----------|--------|-------|---------------|
-| SHA-224 | 224 bits (28 bytes) | 512 bits (64 bytes) | second 32 bits of the fractional parts of the square roots of the 9th–16th primes |
-| SHA-256 | 256 bits (32 bytes) | 512 bits (64 bytes) | first 32 bits of the fractional parts of the square roots of the first eight primes |
-
-SHA-224 is not a truncated SHA-256: it starts from a different initial state, so the two give unrelated digests
-for the same input. The 64-bit members of the family (SHA-384, SHA-512, SHA-512/224, SHA-512/256) use a different
-word size and are described under [SHA-512](#sha-512).
+SHA-224 has its own initial state, so it is not a truncated SHA-256 and the two digests are unrelated. The 64-bit
+members (SHA-384, SHA-512, SHA-512/224, SHA-512/256) are under [SHA-512](#sha-512).
 
 ### Usage
 
@@ -2302,7 +2852,7 @@ assert_eq!(
 );
 assert_eq!(digest[0], 0xba);
 
-// SHA-224 is a separate algorithm with its own initial state, not a truncated SHA-256.
+// Own initial state, not a truncated SHA-256.
 let short: [u8; 28] = Sha224::digest(b"abc");
 assert_eq!(
     Sha224::hex_digest(b"abc"),
@@ -2313,15 +2863,13 @@ assert_eq!(short[0], 0x23);
 
 ### Security
 
-SHA-224 and SHA-256 are not broken. There is no known collision or preimage attack better than brute force on
-either, and both are suitable for digital signatures, certificate signing and integrity checks.
+Not broken: no known collision or preimage attack beats brute force. Fine for signatures, certificates and integrity
+checks, with two caveats:
 
-Two things to know when using them. First, as a Merkle-Damgard hash, SHA-256 allows **length extension**: anyone
-holding `sha256(m)` and the length of `m` can compute `sha256(m || padding || x)` without knowing `m`, because the
-digest *is* the final state. So `sha256(key || message)` is not a safe MAC — use [HMAC](#hmac). SHA-224 withholds the last of
-the eight state words, so an attacker has to guess that one (32 bits) first, which makes extension harder but
-does not remove it. SHA-3 does not have the problem. Second, SHA-256 is fast by design, which is the wrong
-property for storing passwords; use a password-hashing construction such as PBKDF2 instead.
+- **Length extension.** Given `sha256(m)` and the length of `m`, anyone can compute `sha256(m || padding || x)`, so
+  `sha256(key || message)` is not a safe MAC; use [HMAC](#hmac). SHA-224 hides one 32-bit state word, which makes
+  extension harder but not impossible. SHA-3 is not affected.
+- **Not for passwords.** It is fast by design; use a password hash such as [PBKDF2](#pbkdf2).
 
 ### Testing
 
@@ -2329,9 +2877,9 @@ property for storing passwords; use a password-hashing construction such as PBKD
 cargo test sha2::sha256     # known-answer vectors and differential tests against the scalar reference
 ```
 
-The known-answer tests include NIST's published example messages, and digests of inputs whose lengths straddle the
-block and padding boundaries (55, 56 and 57 bytes, 63, 64 and 65, and so on), computed by an independent
-implementation (OpenSSL).
+Known answers are NIST's example messages plus inputs straddling the block and padding boundaries (55/56/57, 63/64/65
+bytes, ...), with digests from OpenSSL. `matches_scalar_backend` checks every backend the CPU supports against the
+scalar one; `--nocapture` names each backend checked.
 
 ### Benchmarking
 
@@ -2344,52 +2892,23 @@ cd bench/sha256cmp && go test -tags purego -v           # Go's portable code, th
 cd bench/sha256cmp && GODEBUG=cpu.sha=off go test -v    # x86-64 only: Go's AVX2 path, the counterpart of x86_avx2
 ```
 
-On an Apple M1 Pro, against Go's `crypto` package on the same machine (medians of three runs):
+Apple M1 Pro, medians of three runs. SHA-224 and SHA-256 run the same 64 rounds, so their speeds match.
 
 | Workload | cryptors scalar | Go portable (`purego`) | cryptors accelerated | Go stdlib |
 |----------|-----------------|------------------------|----------------------|-----------|
 | SHA-224, one 64 MiB message | 409 MiB/s | 304 MiB/s | **2365 MiB/s** (FEAT_SHA256) | 2324 MiB/s |
 | SHA-256, one 64 MiB message | 409 MiB/s | 305 MiB/s | **2365 MiB/s** (FEAT_SHA256) | 2324 MiB/s |
 
-SHA-224 and SHA-256 run the same 64 rounds and differ only in their initial state and in how many words they
-output, so their speeds are the same to within measurement noise.
-
-Each cryptors column has a Go counterpart:
-
-- **Accelerated vs Go stdlib.** Go's assembly runs the same four instructions, and cryptors is 1.8% faster. It used to
-  be 10% slower, and the whole gap came down to one register copy per group of four rounds:
-  - `SHA256H` overwrites its `a`-`d` input, while `SHA256H2` still needs the old value, so one of the two has to
-    work on a copy.
-  - The compiler gave `SHA256H` the copy, which put the copy on the chain every group waits on.
-  - Go copies the value for `SHA256H2` instead, off that chain.
-
-  Go's loop, transliterated verbatim into Rust inline assembly, ran at Go's speed, which ruled out every other
-  cause. An empty inline-assembly barrier that makes the compiler place the copy Go's way closed the gap. Keeping all
-  64 round constants in registers, as Go does, makes no difference, because the compiler already does it.
-- **Scalar vs Go portable.** Go's portable code is what it runs on every platform without assembly. Our scalar
-  backend is 1.34x faster.
-
-The instructions buy 5.8x over scalar.
-
-No x86 figures are given yet: none of the three x86 backends has been timed on real hardware. Rosetta 2 does not
-expose SHA-NI at all, and its timings of the other two say nothing about a real CPU. The SHA-NI backend has not
-been run on real SHA-NI hardware. The AVX2 and BMI backends are correctness-tested on x86-64 under Docker
-(`--platform linux/amd64`, which exposes AVX2, BMI1 and BMI2). On any CPU, `cargo test` runs every backend that CPU
-supports against the scalar one (the `matches_scalar_backend` test), and `--nocapture` names each backend it checked.
-The manual `Benchmarks` workflow (`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
-Since the throughput test times every backend the runner supports, one run on a SHA-NI machine also measures the paths
-that a CPU without it would take.
+No x86 figures yet. Rosetta 2 does not expose SHA-NI, so that backend has never run on real SHA-NI hardware. The AVX2
+and BMI backends are correctness-tested only under Docker (`--platform linux/amd64`), and Rosetta timings say nothing
+about a real CPU. The manual `Benchmarks` workflow (`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64
+and Arm runners; one run on a SHA-NI machine also times the non-SHA-NI paths.
 
 ## SHA-3
 
-SHA-3, specified in [FIPS 202](https://www.nist.gov/publications/sha-3-standard-permutation-based-hash-and-extendable-output-functions), is
-NIST's answer to the Keccak permutation, chosen in 2012 to stand alongside SHA-2 after years of successful
-attacks on MD5 and SHA-1. It is built differently from every hash earlier in this README: instead of a
-Merkle-Damgard compression function, it uses a single permutation, Keccak-f[1600], applied through a "sponge"
-construction. That structural distance from SHA-1/SHA-2 is deliberate — a weakness that breaks one family is
-far less likely to break both.
-
-FIPS 202 defines six functions built on the same sponge:
+SHA-3 ([FIPS 202](https://www.nist.gov/publications/sha-3-standard-permutation-based-hash-and-extendable-output-functions))
+is a sponge over the Keccak-f[1600] permutation, not a Merkle-Damgard compression function like SHA-1/SHA-2. Six
+functions share the sponge; the two SHAKE extendable-output functions (XOFs) let the caller choose the output length.
 
 | Function | Output | Rate (absorbed per permutation) | Capacity |
 |----------|--------|----------------------------------|----------|
@@ -2399,10 +2918,6 @@ FIPS 202 defines six functions built on the same sponge:
 | SHA3-512 | 512 bits (fixed) | 576 bits (72 bytes) | 1024 bits |
 | SHAKE128 | any length (XOF) | 1344 bits (168 bytes) | 256 bits |
 | SHAKE256 | any length (XOF) | 1088 bits (136 bytes) | 512 bits |
-
-The last two are extendable-output functions (XOFs): instead of a fixed-size digest, the caller asks for as
-many output bytes as they need — useful as a building block for key derivation and other constructions that
-want a pseudorandom stream rather than a single fixed-width digest.
 
 ### Usage
 
@@ -2416,8 +2931,8 @@ assert_eq!(
 );
 assert_eq!(digest[0], 0x3a);
 
-// The other fixed-size variants are sha3_224, sha3_384 and sha3_512, each with a `_hex` form.
-// SHAKE writes as many bytes as the output buffer holds.
+// Also sha3_224, sha3_384 and sha3_512, each with a `_hex` form.
+// SHAKE fills the whole output buffer.
 let mut xof = [0u8; 32];
 sha3::shake128(b"", &mut xof);
 assert_eq!(
@@ -2427,8 +2942,7 @@ assert_eq!(
 assert_eq!(xof[0], 0x7f);
 ```
 
-Hashing many messages at once is a separate set of functions, because it is a different shape of API. Each `_many`
-function takes a slice of messages and hashes them side by side, one per vector lane:
+Each `_many` function hashes a slice of messages side by side, one per vector lane:
 
 ```rust
 use cryptors::sha3;
@@ -2442,17 +2956,14 @@ let xofs: Vec<Vec<u8>> = sha3::shake128_many(&[b"a", b"b"], 64);
 assert_eq!(xofs[0].len(), 64);
 ```
 
-They hash in groups of 4 (AVX2) or 2 (SSE2, or aarch64 with FEAT_SHA3), so a whole group costs little more than a
-single digest, and the messages do not have to be the same length. See
-[Hardware acceleration](#hardware-acceleration).
+Messages may differ in length. They run in groups of 4 (AVX2) or 2 (SSE2, or aarch64 with FEAT_SHA3), and a group
+costs little more than one digest. See [Hardware acceleration](#hardware-acceleration).
 
 ### Security
 
-SHA-3 is not broken. It has no known collision, preimage, or length-extension attacks, and its sponge
-construction is immune to the length-extension issues that affect SHA-2's Merkle-Damgard design (feeding a
-SHA-3 digest back in as a prefix does not let an attacker extend it undetected). It is suitable for the same
-uses as SHA-256/SHA-512 — digital signatures, certificate signing, integrity checks — and the SHAKE XOFs are
-commonly used wherever a construction needs variable-length pseudorandom output instead of a fixed digest.
+Not broken: no known collision or preimage attack, and unlike SHA-2's Merkle-Damgard design the sponge is immune to
+length extension. Fit for the same uses as SHA-256/SHA-512 (signatures, certificates, integrity checks); use SHAKE
+where a construction needs variable-length pseudorandom output.
 
 ### Testing
 
@@ -2463,14 +2974,13 @@ cargo test sha3   # known-answer vectors and differential tests against the scal
 ### Benchmarking
 
 ```sh
-# cryptors: the backend selected on your machine and, if that isn't scalar, the scalar one too. One test
-# thread, so the benchmarks don't compete with each other for the CPU.
+# cryptors: your machine's backend, plus scalar if different. One test thread, so benchmarks don't compete.
 cargo test --release sha3 -- --ignored --nocapture --test-threads=1
 cd bench/sha3cmp && go test -v                 # Go's crypto/sha3 as shipped
 cd bench/sha3cmp && go test -tags purego -v    # Go's portable code, the counterpart of our scalar backend
 ```
 
-On an Apple M1 Pro, against Go's `crypto` package on the same machine (medians of three runs):
+Apple M1 Pro, medians of three runs:
 
 | Workload | cryptors scalar | Go portable (`purego`) | cryptors accelerated | Go stdlib |
 |----------|-----------------|------------------------|----------------------|-----------|
@@ -2482,36 +2992,16 @@ On an Apple M1 Pro, against Go's `crypto` package on the same machine (medians o
 | SHAKE256, one 64 MiB message | 619 MiB/s | 390 MiB/s | **834 MiB/s** (FEAT_SHA3) | 831 MiB/s |
 | SHA3-256, 1024 × 64 KiB messages | 622 MiB/s | 391 MiB/s | **1596 MiB/s** (FEAT_SHA3, 2 lanes) | 831 MiB/s |
 
-The four SHA-3 digests differ from each other by more than 2x because their rates differ: SHA3-512 absorbs only
-72 bytes per permutation against SHA3-224's 144, so it runs the same permutation twice as often per byte.
-
-Each cryptors column has a Go counterpart:
-
-- **Accelerated vs Go stdlib.** On macOS, Go's `crypto/sha3` uses the same four ARMv8.2 instructions, and the
-  two land within 2% of each other either way.
-- **Scalar vs Go portable.** Go's portable code is what it runs on every other platform without assembly, and
-  on non-Apple aarch64 by choice. Our scalar backend is 1.58–1.59x faster. Both use the same in-place round
-  structure, so the gap comes from code generation, not from the algorithm.
-
-FEAT_SHA3 buys 1.35x over scalar here. That is well short of the halved instruction count (74 instructions per
-round against 150), and why has not been established; Go's FEAT_SHA3 assembly is no faster. What is certain is
-that a single message leaves half of every 128-bit register idle. The batch row fills it, for 1.9x the
-single-message FEAT_SHA3 throughput and 2.6x scalar. `crypto/sha3` has no batch API, so its figure there is
-its single-message one over 1024 sequential calls.
-
-No x86 figures are given yet. Under Rosetta 2 the x86 code runs, but its speed says nothing about real x86
-hardware: 256-bit AVX2, for instance, is emulated as pairs of 128-bit NEON operations. The x86 backends,
-including the BMI1/BMI2 scalar build, are therefore verified for *correctness* only. The manual `Benchmarks`
-workflow (`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
+- Speed tracks the rate: SHA3-512 absorbs 72 bytes per permutation, SHA3-224 144.
+- The batch row uses `sha3_256_many`; `crypto/sha3` has no batch API, so its figure is 1024 sequential calls.
+- No x86 figures yet. Rosetta 2 emulates AVX2 as pairs of NEON operations, so the x86 backends (BMI1/BMI2 scalar
+  included) are verified for correctness only. The manual `Benchmarks` workflow (`.github/workflows/bench.yml`) runs
+  both sides on GitHub's x86-64 and Arm runners.
 
 ## SHA-512
 
-SHA-384, SHA-512, SHA-512/224 and SHA-512/256, specified in [FIPS 180-4](https://csrc.nist.gov/pubs/fips/180-4/upd1/final),
-are the four 64-bit members of the SHA-2 family. They are built exactly like [SHA-256](#sha-256) — a Merkle-Damgard
-construction around a compression function of rounds — but on 64-bit words: eight of them in the state, a 128-byte
-block and 80 rounds. Each operation handles twice as many bits, so on a 64-bit CPU without dedicated instructions
-SHA-512 usually hashes a long message faster than SHA-256 does (1.3x in the scalar backends here, see Benchmarking
-below).
+The four 64-bit SHA-2 functions from [FIPS 180-4](https://csrc.nist.gov/pubs/fips/180-4/upd1/final): the
+[SHA-256](#sha-256) design with 64-bit words, a 128-byte block and 80 rounds.
 
 | Function | Output | Block | Initial state |
 |----------|--------|-------|---------------|
@@ -2520,12 +3010,9 @@ below).
 | SHA-512/224 | 224 bits (28 bytes) | 1024 bits (128 bytes) | generated by the SHA-512/t procedure, from the string `SHA-512/224` |
 | SHA-512/256 | 256 bits (32 bytes) | 1024 bits (128 bytes) | generated by the SHA-512/t procedure, from the string `SHA-512/256` |
 
-None of the shorter functions is a truncated SHA-512: each starts from its own initial state, so the digests are
-unrelated to SHA-512's for the same input. SHA-512/t is a family of functions whose initial state FIPS 180-4
-derives, so that `t` does not need a constant of its own: it is what SHA-512 outputs for the string `SHA-512/t`,
-when started from SHA-512's initial state XOR `0xa5a5a5a5a5a5a5a5`. A test runs that procedure for `t` = 224 and
-256 and checks it against the constants in the code. The crate implements the two values of `t`, 224 and 256, that
-the standard approves; SHA-512/t for other values of `t` is not provided.
+Each shorter function has its own initial state, so it is not a truncated SHA-512 and the digests are unrelated. Only
+the approved `t` = 224 and 256 are provided; their initial state is SHA-512 of the string `SHA-512/t`, started from
+SHA-512's initial state XOR `0xa5a5a5a5a5a5a5a5`. A test recomputes both and checks the constants in the code.
 
 ### Usage
 
@@ -2539,7 +3026,7 @@ assert_eq!(
 );
 assert_eq!(digest[0], 0xdd);
 
-// The others are separate algorithms with their own initial states, not truncated SHA-512 digests.
+// Separate algorithms with their own initial states, not truncated SHA-512.
 let short: [u8; 48] = Sha384::digest(b"abc");
 assert_eq!(short[0], 0xcb);
 assert_eq!(
@@ -2554,19 +3041,13 @@ assert_eq!(
 
 ### Security
 
-SHA-384, SHA-512, SHA-512/224 and SHA-512/256 are not broken. There is no known collision or preimage attack better
-than brute force on any of them, and all four are suitable for digital signatures, certificate signing and
-integrity checks.
-
-They share the one weakness of the Merkle-Damgard construction that SHA-256 has, **length extension**, but SHA-384,
-SHA-512/224 and SHA-512/256 are protected from it by their truncated output. Whoever holds `sha512(m)` and the length
-of `m` can compute `sha512(m || padding || x)` without knowing `m`, because the digest *is* the final state, so
-`sha512(key || message)` is not a safe MAC — use [HMAC](#hmac). SHA-384 withholds 128 bits of the state, SHA-512/256 withholds
-256 and SHA-512/224 withholds 288, and an attacker has to guess the withheld bits before extending, which is far
-beyond reach. That is why SHA-512/256 is sometimes chosen over SHA-256 where length extension is a concern; HMAC is
-still the right way to build a MAC from any of them. SHA-3 does not have the problem at all. And, like SHA-256,
-SHA-512 is fast by design, which is the wrong property for storing passwords; use a password-hashing construction
-such as PBKDF2 instead.
+- **Not broken.** No collision or preimage attack better than brute force is known on any of the four; all are fine
+  for signatures, certificates and integrity checks.
+- **Length extension.** Given `sha512(m)` and the length of `m`, anyone can compute `sha512(m || padding || x)`, so
+  `sha512(key || message)` is not a safe MAC; use [HMAC](#hmac). The truncated variants withhold part of the state
+  (SHA-384: 128 bits, SHA-512/256: 256, SHA-512/224: 288), which puts length extension out of reach, but HMAC is still
+  the right way to build a MAC from any of them.
+- **Not for passwords.** They are fast by design; use a password-hashing construction such as [PBKDF2](#pbkdf2).
 
 ### Testing
 
@@ -2574,24 +3055,22 @@ such as PBKDF2 instead.
 cargo test sha2::sha512     # known-answer vectors and differential tests against the scalar reference, for all four functions
 ```
 
-The known-answer tests include NIST's published example messages, and digests of inputs whose lengths straddle the
-block and padding boundaries (111, 112 and 113 bytes, 127, 128 and 129, and so on). The expected digests of all four
-functions come from two independent implementations, OpenSSL and Go's standard library, which agree with each
-other. On any CPU, `cargo test` runs every backend that CPU supports against the scalar one (the
-`matches_scalar_backend` test), and `--nocapture` names each backend it checked. The x86-64 build, including the
-BMI1/BMI2 one, passes the same tests under Docker (`--platform linux/amd64`).
+Known answers are NIST's example messages plus lengths around the block and padding boundaries (111/112/113,
+127/128/129, ...), with digests from OpenSSL and Go's standard library, which agree. `matches_scalar_backend` checks
+every backend the CPU supports against scalar; `--nocapture` names each one. The x86-64 build, with and without
+BMI1/BMI2, passes the same tests under Docker (`--platform linux/amd64`).
 
 ### Benchmarking
 
 ```sh
-# cryptors: every backend your CPU supports, starting with the one the public functions use. One test thread,
-# so the benchmarks don't compete with each other for the CPU.
+# cryptors: every backend your CPU supports, starting with the one the public functions use.
+# One test thread, so the benchmarks don't compete for the CPU.
 cargo test --release sha2::sha512 -- --ignored --nocapture --test-threads=1
 cd bench/sha512cmp && go test -v                        # Go's crypto/sha512 as shipped
 cd bench/sha512cmp && go test -tags purego -v           # Go's portable code, the counterpart of our scalar backend
 ```
 
-On an Apple M1 Pro, against Go's `crypto` package on the same machine (medians of three runs):
+Apple M1 Pro, medians of three runs. The four functions run the same 80 rounds, so their speeds match within noise.
 
 | Workload | cryptors scalar | Go portable (`purego`) | cryptors accelerated | Go stdlib |
 |----------|-----------------|------------------------|----------------------|-----------|
@@ -2600,22 +3079,7 @@ On an Apple M1 Pro, against Go's `crypto` package on the same machine (medians o
 | SHA-512/224, one 64 MiB message | 541 MiB/s | 437 MiB/s | **1374 MiB/s** (FEAT_SHA512) | 1363 MiB/s |
 | SHA-512/256, one 64 MiB message | 540 MiB/s | 438 MiB/s | **1392 MiB/s** (FEAT_SHA512) | 1361 MiB/s |
 
-The four functions run the same 80 rounds and differ only in their initial state and in how many words they
-output, so their speeds are the same to within measurement noise.
-
-Each cryptors column has a Go counterpart:
-
-- **Accelerated vs Go stdlib.** Go's assembly runs the same four instructions, and the two land within about 2% of
-  each other, which is as far apart as two runs of the same program. Unlike SHA-256, no gap needed closing here.
-- **Scalar vs Go portable.** Go's portable code is what it runs on every platform without assembly. Our scalar
-  backend is 1.23–1.24x faster.
-
-The instructions buy 2.6x over scalar. Compared across the two algorithms on this machine, SHA-512's scalar backend
-is 1.32x faster than SHA-256's (540 against 409 MiB/s), but SHA-256 has instructions here too, and they are faster:
-2365 MiB/s against SHA-512's 1386.
-
-No x86 figures are given yet, for the same reason as SHA-256: nothing here can time real x86 hardware. The x86-64
-scalar backend, with and without BMI1/BMI2, is correctness-tested under Docker. The manual `Benchmarks` workflow
+No x86 figures yet: nothing here can time real x86 hardware. The manual `Benchmarks` workflow
 (`.github/workflows/bench.yml`) runs both sides on GitHub's x86-64 and Arm runners.
 
 ## Contributing

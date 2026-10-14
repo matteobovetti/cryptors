@@ -44,6 +44,34 @@ jobs:
         # HKDF has no backend of its own either: it times HMAC-SHA256 and
         # HMAC-SHA512, so it runs on whichever SHA-2 backends the runner has,
         # on both sides.
+        # PBKDF2 is the same: it times HMAC-SHA1, HMAC-SHA256 and HMAC-SHA512
+        # in a loop, so it runs on whichever SHA-1 and SHA-2 backends the runner
+        # has, on both sides (on x86-64, SHA-NI for SHA-1 and SHA-256 where the
+        # CPU has it, and the scalar backend for SHA-512).
+        # Rand has none either: both sides ask the operating system for the
+        # bytes, getrandom(2) on these runners, so its figures follow the
+        # kernel's.
+        # RC4 has no hardware backend: the same portable code is timed on both
+        # architectures, against Go's crypto/rc4, which is portable code too.
+        # RSA has no hardware path: its big-number arithmetic is portable code on
+        # both architectures (the 64 by 64 to 128 bit product that `u128` makes), against
+        # Go's crypto/rsa, whose multiplication of a number by a word has assembly for
+        # moduli of 1,024, 1,536 and 2,048 bits on both; its `purego` run is the
+        # like-for-like one. Key generation uses the 708 candidates of
+        # c2sp.org/CCTV/keygen on both sides, so the search is the same.
+        # ML-DSA has no hardware path of its own: its transform is portable code
+        # on both architectures, and the SHAKE under it runs on whatever SHA-3
+        # backend the runner has (FEAT_SHA3 on aarch64 where present, the scalar
+        # build otherwise, and on x86-64 the BMI build where the CPU has BMI1
+        # and BMI2). Go's crypto/mldsa is portable code over a Keccak that is
+        # assembly on x86-64 but, on Arm, only on Apple's cores (Go finds the
+        # SHA-3 instructions slower than its portable code elsewhere), and its
+        # `purego` run swaps only that.
+        # ML-KEM is the same: portable lattice arithmetic on both architectures,
+        # over whatever SHA-3 backend the runner has, against Go's crypto/mlkem
+        # (ML-KEM-768 and ML-KEM-1024; Go has no ML-KEM-512), which is portable
+        # code over the same Keccak as its ML-DSA, and whose `purego` run swaps
+        # only that.
         # HPKE's AES-GCM uses PCLMULQDQ on x86-64 and PMULL on aarch64 where
         # the runner has them, and its throughput test times the scalar GHASH
         # beside them. Unlike on macOS, AES is not in either target's baseline

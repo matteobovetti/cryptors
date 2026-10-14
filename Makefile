@@ -43,14 +43,20 @@ bench-throughput:
 	cargo test --release -- --ignored --nocapture --test-threads=1
 
 # The Go standard-library counterparts, same buffer sizes and methodology.
-# `-tags purego` is Go's portable AES, ECDH, ECDSA, Ed25519, HPKE, SHA-2 and
-# SHA-3, the counterpart of our scalar backends (for ECDH, ECDSA and Ed25519, of
-# our one implementation; for HPKE, of our scalar GHASH). On x86-64,
+# `-tags purego` is Go's portable AES, ECDH, ECDSA, Ed25519, HPKE, ML-DSA, ML-KEM,
+# SHA-2 and SHA-3, the counterpart of our scalar backends (for ECDH, ECDSA and
+# Ed25519, of our one implementation; for HPKE, of our scalar GHASH; for ML-DSA
+# and ML-KEM, which are portable code in Go too, it only swaps the Keccak under
+# them). On x86-64,
 # `GODEBUG=cpu.sha=off` makes Go's SHA-256 skip SHA-NI and run its AVX2 path,
 # the counterpart of our AVX2 backend; other architectures have no such path,
 # so the run is skipped there. Go's DES is portable code on every platform, so
-# it has no `purego` run. HMAC and HKDF have none either: they run on the
-# hashes, whose own runs already time Go's portable code.
+# it has no `purego` run. HMAC, HKDF and PBKDF2 have none either: they run on the
+# hashes, whose own runs already time Go's portable code. Nor has Rand: both sides
+# call the operating system's generator. Go's RC4 is portable code on every
+# platform too, so it has one run. RSA has two: Go's big-number arithmetic has
+# assembly for numbers of 1,024, 1,536 and 2,048 bits, and `-tags purego` is its
+# portable code, the like-for-like counterpart of ours.
 bench-go:
 	cd bench/aescmp && go test -v
 	cd bench/aescmp && go test -tags purego -v
@@ -65,6 +71,15 @@ bench-go:
 	cd bench/hmaccmp && go test -v
 	cd bench/hpkecmp && go test -v
 	cd bench/hpkecmp && go test -tags purego -v
+	cd bench/mldsacmp && go test -v
+	cd bench/mldsacmp && go test -tags purego -v
+	cd bench/mlkemcmp && go test -v
+	cd bench/mlkemcmp && go test -tags purego -v
+	cd bench/pbkdf2cmp && go test -v
+	cd bench/randcmp && go test -v
+	cd bench/rc4cmp && go test -v
+	cd bench/rsacmp && go test -v
+	cd bench/rsacmp && go test -tags purego -v
 	cd bench/sha1cmp && go test -v
 	cd bench/md5cmp && go test -v
 	cd bench/sha256cmp && go test -v
