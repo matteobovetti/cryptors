@@ -315,7 +315,12 @@ fn cctv_unlucky_vectors() {
 #[test]
 #[ignore = "needs the full vector files: MLKEM_VECTORS=/dir cargo test --release mlkem::conformance -- --ignored --nocapture"]
 fn every_vector() {
-    let dir = std::env::var("MLKEM_VECTORS").expect("MLKEM_VECTORS names the directory");
+    // `cargo test -- --ignored` runs every ignored test, whether or not the files
+    // are there.
+    let Ok(dir) = std::env::var("MLKEM_VECTORS") else {
+        println!("skipped: MLKEM_VECTORS does not name a directory");
+        return;
+    };
     let read = |name: &str| std::fs::read_to_string(format!("{dir}/{name}")).unwrap();
     let acvp = check_acvp(&read("acvp.txt"));
     let wycheproof = check_wycheproof(&read("wycheproof.txt"));

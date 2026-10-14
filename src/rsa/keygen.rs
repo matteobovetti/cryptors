@@ -824,33 +824,35 @@ mod tests {
         }
     }
 
-    //
-    // *** This test not working inside CI on aarch64 and x86 taget architecture. ***
-    //
     // Generation with a seed leaves none of the key's numbers in freed memory
     // that was not wiped: the candidates, the primes, the exponent.
-    //     #[test]
-    //     fn generation_leaves_nothing_behind() {
-    //         use crate::rsa::testutil::probe::{leaks, needles_of_bytes, needles_of_limbs};
-    //
-    //         let seed = |_: ()| Drbg::new(b"leaks", &[0, 0]);
-    //         let reference = generate(&mut seed(()), 1024, 1024).unwrap();
-    //         let mut needles = Vec::new();
-    //         for number in [reference.d(), reference.p(), reference.q()] {
-    //             needles.extend(needles_of_bytes(&number));
-    //         }
-    //         for number in [reference.p(), reference.q(), reference.d()] {
-    //             needles.extend(needles_of_limbs(
-    //                 Limbs::from_be_bytes(&number).trimmed().as_ref(),
-    //             ));
-    //         }
-    //         assert!(needles.len() > 50);
-    //         let mut rng = seed(());
-    //         let hits = leaks(&needles, || {
-    //             let key = generate(&mut rng, 1024, 1024).unwrap();
-    //             assert!(key == reference);
-    //             drop(key);
-    //         });
-    //         assert_eq!(hits, 0);
-    //     }
+    #[test]
+    fn generation_leaves_nothing_behind() {
+        use crate::rsa::testutil::probe::{leaks, needles_of_bytes, needles_of_limbs};
+
+        let seed = |_: ()| Drbg::new(b"leaks", &[0, 0]);
+        let reference = generate(&mut seed(()), 1024, 1024).unwrap();
+        let mut needles = Vec::new();
+        let mut numbers = [reference.d(), reference.p(), reference.q()];
+        for number in &numbers {
+            needles.extend(needles_of_bytes(number));
+            needles.extend(needles_of_limbs(
+                Limbs::from_be_bytes(number).trimmed().as_ref(),
+            ));
+        }
+        assert!(needles.len() > 50);
+        // The copies of the accessors are not wiped when they are dropped, so they
+        // are wiped here: an allocator hands the block of a freed copy out again,
+        // and what the generation does not write to it would be found in it.
+        for number in &mut numbers {
+            crate::wipe::wipe_bytes(number);
+        }
+        let mut rng = seed(());
+        let hits = leaks(&needles, || {
+            let key = generate(&mut rng, 1024, 1024).unwrap();
+            assert!(key == reference);
+            drop(key);
+        });
+        assert_eq!(hits, 0);
+    }
 }
