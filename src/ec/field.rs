@@ -33,14 +33,14 @@ pub(crate) trait Modulus<const N: usize>: 'static {
 
 /// `a + b + carry` as a limb and a carry.
 #[inline(always)]
-const fn adc(a: u64, b: u64, carry: u64) -> (u64, u64) {
+pub(crate) const fn adc(a: u64, b: u64, carry: u64) -> (u64, u64) {
     let t = a as u128 + b as u128 + carry as u128;
     (t as u64, (t >> 64) as u64)
 }
 
 /// `a - b - borrow` as a limb and a borrow (0 or 1).
 #[inline(always)]
-const fn sbb(a: u64, b: u64, borrow: u64) -> (u64, u64) {
+pub(crate) const fn sbb(a: u64, b: u64, borrow: u64) -> (u64, u64) {
     let t = (a as u128).wrapping_sub(b as u128 + borrow as u128);
     (t as u64, (t >> 127) as u64)
 }
@@ -48,7 +48,7 @@ const fn sbb(a: u64, b: u64, borrow: u64) -> (u64, u64) {
 /// `acc + a * b + carry` as a limb and a carry. It cannot overflow: the sum is
 /// at most `(2^64 - 1) + (2^64 - 1)^2 + (2^64 - 1) = 2^128 - 1`.
 #[inline(always)]
-const fn mac(acc: u64, a: u64, b: u64, carry: u64) -> (u64, u64) {
+pub(crate) const fn mac(acc: u64, a: u64, b: u64, carry: u64) -> (u64, u64) {
     let t = acc as u128 + a as u128 * b as u128 + carry as u128;
     (t as u64, (t >> 64) as u64)
 }
@@ -172,7 +172,7 @@ const fn mont_mul<const N: usize>(a: &[u64; N], b: &[u64; N], p: &[u64; N], inv:
 }
 
 /// `-p^-1 mod 2^64`, for odd `p0`, the lowest limb of the prime.
-const fn neg_inv(p0: u64) -> u64 {
+pub(crate) const fn neg_inv(p0: u64) -> u64 {
     // For odd `p0`, `p0 * p0 = 1 mod 8`, so `x = p0` is an inverse to 3 bits.
     // Each step of Newton's iteration doubles the number of correct bits, and
     // five of them take 3 to 96.

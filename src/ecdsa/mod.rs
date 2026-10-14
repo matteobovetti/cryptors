@@ -135,7 +135,7 @@
 //! The NIST curves do not resist a large quantum computer: Shor's algorithm
 //! finds `d` from `d * G` in polynomial time, and anything signed by a key that
 //! has to stay trustworthy past the arrival of such a machine needs a
-//! post-quantum scheme, such as ML-DSA, alongside or instead.
+//! post-quantum scheme, such as [ML-DSA](crate::mldsa), alongside or instead.
 //!
 //! # Implementation
 //!
