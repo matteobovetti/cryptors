@@ -88,7 +88,7 @@
 //!
 //! Ed25519 does not resist a large quantum computer: Shor's algorithm finds `s`
 //! from `[s]B`. A signature that has to stay trustworthy after such a machine
-//! exists needs a post-quantum scheme, such as ML-DSA, alongside or instead.
+//! exists needs a post-quantum scheme, such as [ML-DSA](crate::mldsa), alongside or instead.
 //! Ed448, the other curve of RFC 8032, is not implemented.
 //!
 //! # Implementation
