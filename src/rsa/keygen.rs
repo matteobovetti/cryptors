@@ -824,6 +824,9 @@ mod tests {
         }
     }
 
+    //
+    // *** This test not working inside CI on aarch64 and x86 taget architecture. ***
+    //
     // Generation with a seed leaves none of the key's numbers in freed memory
     // that was not wiped: the candidates, the primes, the exponent.
     //     #[test]
