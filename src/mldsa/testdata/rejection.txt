@@ -1,0 +1,249 @@
+# NIST's ACVP known-answer tests for the rejection loop of ML-DSA.Sign_internal
+# (draft-celi-acvp-ml-dsa, tables 1 and 2), extracted by a script kept outside
+# the repository. Do not edit by hand.
+#
+# 'Path' cases are chosen to reach each way a signing attempt can be rejected; the
+# number in a 'Count' case is how many attempts were thrown away before the signature.
+
+[rejection]
+set = ML-DSA-44
+kind = path
+number = 1
+seed = 5c624fcc1862452452d0c665840d8237f43108e5499edcdc108fbc49d596e4b7
+message = 951fdf5473a4cba6d9e5b5db7e79fb8173921ba5b13e9271401b8f907b8b7d5b
+key_sha256 = ac825c59d8a4c453a2c4efea8395741ca404f3000e28d56b25d03bb402e5cb2f
+sig_sha256 = dcc71a421bc6ffafb7df0c7f6d018a19ada154d1e2ee360ed533cecd5dc980ad
+
+[rejection]
+set = ML-DSA-44
+kind = path
+number = 2
+seed = 836eabedb4d2cd9be6a4d957cf5ee6bf489304136864c55c2c5f01da5047d18b
+message = 199a0ab735e9004163dd02d319a61cfe81638e3bf47bb1e90e90d6e3ea545247
+key_sha256 = e1ff40d96e3552fab531d1715084b7e38ccdbacc0a8af94c30959fb4c7f5a445
+sig_sha256 = a2608bc27e60541d27b6a14f460d54a48c0298dcc3f45999f29047a3135c4941
+
+[rejection]
+set = ML-DSA-44
+kind = path
+number = 3
+seed = ca5a01e1ea6552cb5c9803462b94c2f1dc9d13bb17a6ace510d157056a2c6114
+message = 8c8caca88fff52b9330510537b3701b3993f3726136a650f48f8604551550832
+key_sha256 = a4652dc4a271095268dd84a5b0744dfdbe2e642e4d41fbc4329c2fba534c0e13
+sig_sha256 = b4b142209137397dad504caed01d390adaf49973d8d2414fc3457fb7af775189
+
+[rejection]
+set = ML-DSA-44
+kind = path
+number = 4
+seed = 9c005f1550b4f31855c6b92f978736733f37791cb39dd182d7ba5732bdc2483e
+message = b744343f30f7fee088998ba574e799f1bf3939c06c29bf9ac10f3588a57e21e2
+key_sha256 = 2485aa99345f1b334d4d94b610fbffccb626cbfd4e9ff0e1f6fc35093c423544
+sig_sha256 = 5b80a60baa480b9d0c7d2c05b50928c4bf6808dda693642058a3eb77eaa768fc
+
+[rejection]
+set = ML-DSA-44
+kind = path
+number = 5
+seed = 4fab5485b009399e8ae6fc3d3eefbfe8e09796e4477aabd5eb1cc908fa734de3
+message = 7cab0fdcf4bea5f039137478aa45c9c48ef96d906fc49f6e2f138111bf1b4a4e
+key_sha256 = cb56909a7cf3008a662dc635edcb79dc151ca7acbae17b544384abd91bbbc1e9
+sig_sha256 = 6cc38d73d639682abc556dc6dcf436de24033091f34004f410fabc6887f77ab0
+
+[rejection]
+set = ML-DSA-65
+kind = path
+number = 1
+seed = 464756a985e5df03739d95dd309c1ed9c5b04254cc294e7e7eb9b9365ee15117
+message = 491101bba044de6e44a63796c33cda051bb05a60725b87af4ba9db940c03ac09
+key_sha256 = ae95ea0daa80199e7b4a74eb5a1b1dc6c3805bd01d2fa78d7c4fba8c255aa13d
+sig_sha256 = 8e08ea0c8db941685b9905a73b0b57bad3500b1f73490480b24375b41230cc04
+
+[rejection]
+set = ML-DSA-65
+kind = path
+number = 2
+seed = 235a48db4ca7916b884f424a8586efd517e87c64aecec0fce9a3cc212ba1522e
+message = f8ce85cb2ec474ffbf5a3ffae029ce6f4526b8d597655067f97f438b81071e9b
+key_sha256 = 1ac58a909db4d7bc2473ab5e24af768279c76f86a82d448258e24eea4ea6b713
+sig_sha256 = ae9531a01738615b6d33c77b3ff618a86e101fdc4c8504681f0edfa64511ad63
+
+[rejection]
+set = ML-DSA-65
+kind = path
+number = 3
+seed = e13131b705a760305feffebfe99082e2691a444bbefcc3edf67d909886200207
+message = cd365512c7e61bbaa130800b37f3bb46aaf1beef3742ea8a9010a6dd4576ed0b
+key_sha256 = b422093f95cc489c52f4fa2b8973a2fddd44426d1d04d1aaeefc8715d417181f
+sig_sha256 = 3c55e604deca7b89a99305d7a391c35f66a17c1923f467675ec951c0948d21c9
+
+[rejection]
+set = ML-DSA-65
+kind = path
+number = 4
+seed = 0a4793e040a4bc0d0f37643d12c1ea1f10648724609936c76e0ec83e37209e92
+message = 6d9c7a795e48d80a892cbf4d4558429787277e3806eb5d0bce1640eebbbf9aec
+key_sha256 = 622d26d536d4d66cd94956b33a74e2e830ed265d25c34ff7c3e5243403146adf
+sig_sha256 = 3b141110b9f56540b2d49aacde6399974a4eac40621e367e68d4504f294db21b
+
+[rejection]
+set = ML-DSA-65
+kind = path
+number = 5
+seed = f865b889e5022d54babc81ca67e7eb39f1ac42f92cf5295c3da5c9667db1b924
+message = 047afaadbe020ed2d766da85317dede80be550545f0b21e3f555a990f8004258
+key_sha256 = 45bc8edd1a620c46e973e346844270721824d97888bc174281852d98b7e8f4a3
+sig_sha256 = 56308a3578360c41356ba9c97d3240e01767fa76bbba9fd0cc6cfa9add088db9
+
+[rejection]
+set = ML-DSA-87
+kind = path
+number = 1
+seed = 0d58219132746be077dfe821e9f8fd87857b28ab91d6a567e312a73e2636032c
+message = 3aa49ef72d010aec19383ba1e83ec2dd3dcc207a96ffceb9ffa269e3e3d66400
+key_sha256 = 4d261270341a7ac6b66900ddc2b8ab34ab483c897410ddf3b2c072bdda416434
+sig_sha256 = 5049dc39045618b903c71595b3a3e07a731f95d37304623acc98bcef4258b4ca
+
+[rejection]
+set = ML-DSA-87
+kind = path
+number = 2
+seed = 146c47ab9f88408eb76a813294d533b29d7e0fda75da5a4e7c69eb61efeebb78
+message = 82c44f998a8d24f056084d0e80ecfd8434493385a284c69974923c270d397782
+key_sha256 = 05194438af855b79db8ccccb647d6ba5c7aaf901bbd09d3b29395f0ea431d164
+sig_sha256 = cffc5988a351e14a3ee1282f042a143679c4503814296b27993949a7ff966f57
+
+[rejection]
+set = ML-DSA-87
+kind = path
+number = 3
+seed = 049d9b0b646a2ac7f50b63ce5e4bfe44c9b87634f4ff6c14c513e388b8a1f808
+message = febc9f8ae159002be1a11d395959dd7fc20718135690cdaa2bcfb5801c02ab89
+key_sha256 = ac8fe6b2fe26591b129ea536a9a001c785d8acbdd9489f6e51469a156e9e635d
+sig_sha256 = ff4006089bdf7337e868f86ddf48f239d2a52ea1d0f686e0103bf19c3b571db1
+
+[rejection]
+set = ML-DSA-87
+kind = path
+number = 4
+seed = 9823ddde446a8ea883dad3ac6477f79839fdc2d2def2416be0a8b71cfbc3f5c6
+message = f7592c97c1a96a2f4053588f5cdad4c50bf7c3752709854fa27779b445dd2ba2
+key_sha256 = 525010e307c4ea7667d54ee27007c219b01f4cf88dc3ab2de8e9aaa59440a884
+sig_sha256 = fd7757602b83b0a67a314cd5bcc880e7ae47acdf4d6af98269028efb486838f7
+
+[rejection]
+set = ML-DSA-87
+kind = path
+number = 5
+seed = ae213fe8589b414f53780d8b9b6837179967e13cb474c5ad365c043778d2bc90
+message = 19c1913ba76ff04596bb7cc80fd825a5aedef5d5ad61cedb5203e6d7edb18877
+key_sha256 = d4988e91064e5df6d867434d1ded16dcd8533e39e420dc2b4eb9e40a84146f7d
+sig_sha256 = 23fe743edd101970d499e7eb57a7aa245baf417e851b260c55dd525a445f08da
+
+[rejection]
+set = ML-DSA-44
+kind = count
+number = 77
+seed = 090d97c1f4166eb32ca67c5fb564acbe0735db4af4b8db3a7c2ce7402357ca44
+message = e3838364b37f47edfca2b577b20b80c3cb51b9f56e0e4cdb7df002c874039252
+key_sha256 = 26d79e4068040e996bc9eb5034c20489c0ad38dc2fec1918d0760c8621872408
+sig_sha256 = cd91150c610ff02de1dd7049c309efe800ce5c1bc2e5a32d752ab62c5bf5e16f
+
+[rejection]
+set = ML-DSA-44
+kind = count
+number = 100
+seed = cfc73d07a883543a804f770070861825143a62f2f97d05fce00fd8b25d29a43f
+message = 0960c13e9ba467a938450120cc96ff6f04b7e557c99a838619a48f9a38738ab8
+key_sha256 = 89142ab26d6eb6c01fa3f189a9c877597740d685983f29bbdd3596648266ae0e
+sig_sha256 = b6296fff0c1f23de4906d58144b00a2db13ad25e49b4b8573a62efeecb544dd7
+
+[rejection]
+set = ML-DSA-65
+kind = count
+number = 64
+seed = 26b605c78ac762fa1634c6f91dd117c4fbff7f3a7e7781f0cc83b6281f04ad7f
+message = c9b07e7ddc0274468f312f5c692a54ac73d1e34d8638e20a2cd3c788f27d4355
+key_sha256 = 5da13e571df80867a8f27e0ff81be7252a1abf89b3d6a03d4036af643efbb04b
+sig_sha256 = 12a4637e3a833a5a2a46f6a991399e544b62a230b7aa82f7366840ff6a88de61
+
+[rejection]
+set = ML-DSA-65
+kind = count
+number = 73
+seed = 9191cf381bee17475c011986efb6afb1efa6997442fd33427353f1da1aa39fc0
+message = e616e36e81aa1ec39262109421ae0ddda5e3b5a8f4a252bca27ae882538df618
+key_sha256 = 7930d4e52ba03b61daa57743b39e291d824dc156356c6b1a8232574d5c8bdd08
+sig_sha256 = 3d758ace312433d780403b3d4273171fb93d008b395352142c6dc5173e517310
+
+[rejection]
+set = ML-DSA-65
+kind = count
+number = 66
+seed = 516912c7b90a3dbe009b7478dbcaf0f5c5c9ed9699a20d0ca56cc516e5a444cd
+message = 9247ca75f9456226a0c783dabcc33ff5b4b489575aded543e74b29b45f9c8ef2
+key_sha256 = 0fd15951b93a4d19446b48d47d32d2ca2253ff43bb8cccb34c07e5f1a3181b7a
+sig_sha256 = e5ce267800edf33588451050f9b4a5bf97030d045132a7e3ed9210e74028d23b
+
+[rejection]
+set = ML-DSA-65
+kind = count
+number = 65
+seed = d4b841f882d50ab9e590066bafaba0f0d04d32641c0b978e54ccaa69a6e8d2c4
+message = 175231657b0f3c7065947999467c342064f29bfaeb553e97561407d5560e3aeb
+key_sha256 = 0039c128dde6923ea08ff14f5c5c66dcb282b471fd1917dbebe07c8c45b73f8a
+sig_sha256 = 8830ea254af2854bf67c2b907e2321c94fd6efb2fdaa77669fc3a5c4426c57c9
+
+[rejection]
+set = ML-DSA-65
+kind = count
+number = 64
+seed = 5492eb8d811072c030a30cc66b23a173059eba0d4868ccb92fbe2510b4a5915f
+message = 33d2753ed87d0003b44c1af5f72eb931f559c6b4931af7e249f65d3fa7613295
+key_sha256 = 573dcd99c86dae81f6f80cb00af40846028ea8f9fe63102fe4a78238bc7b660e
+sig_sha256 = 84d4af50933d6e13d4332b86af0692a66f5030ab01c2eac4131a5eebf78ce9e5
+
+[rejection]
+set = ML-DSA-87
+kind = count
+number = 64
+seed = b5c07ecefe9e7c3b885fdef032bdf9f807b4011e2dfe6806c088d2081631c8eb
+message = d1d5c2d167d6e62906790a5fedf5a0a754cfaf47e6a11aeb93fb8c41934c31f8
+key_sha256 = 5d22f4c40f6eeb96bb891db15884ed4b0009ea02a24d9d1e9adfc81c7a42ea7f
+sig_sha256 = 54f0a9cb26f98b394a35918eca6760ebd10753fc5cdba8be508873ad83538131
+
+[rejection]
+set = ML-DSA-87
+kind = count
+number = 65
+seed = e8fc3c9fad711dda2946334fbbd331468d6e9ab48eb86dcd03f300a17aebc5e5
+message = 3b435f7a2ce431c7ab8eae0991c5dac610827c99d27803046fbc6c567d6b71f2
+key_sha256 = b6c4dc9b20ce5d0f445931ee316cf0676e806d1a6a98868881d060ea27ceb139
+sig_sha256 = e337495f08773f14fb26a3e229b9b26d086644c7fdc300267f9dcdd5d78db849
+
+[rejection]
+set = ML-DSA-87
+kind = count
+number = 64
+seed = 151f80886d6ce8c3b428964fe02c40ca0c8effa100ee089e54d785344fccf719
+message = c628ce94d2aa99aa50cf15b147d4f9a9c62a3d4612152de0a502c377f472d614
+key_sha256 = 127972c33323fefbf6b69c19e0c86f41558d9ab2b1a8ad6f39bd0a0245dc8d7e
+sig_sha256 = 99b552b21432544248bff47ac8f24cb78dbb25c9683f3adcb75614bed58a0358
+
+[rejection]
+set = ML-DSA-87
+kind = count
+number = 64
+seed = 48beffb4c97e59e474e1906f39888be5ae62f6a011c05ef6a6b8d1e54f2171b7
+message = d2756a8fb4e47f796af704ed0fc8c6e573d42dfab443b329f00f8db2ff12c465
+key_sha256 = 72da77cf563cbb530129f60129af989ca4036ba1058267bfba34a2c70be803c4
+sig_sha256 = e643914b8556d05360c65eb3e7a06be7c398b82d49973eefdc711e65b11eb5e8
+
+[rejection]
+set = ML-DSA-87
+kind = count
+number = 69
+seed = fe2da9dd93a077fcb6452ac88d0a5762eb896baaac6ce7d01cb1370ba8322390
+message = a86b29adf2300d2636e21d4a350cd18e55a254379c3659a7a95d8734cec1f005
+key_sha256 = 7422dbe3f476ffe41a4efb33f3ddfd8b328029ba3050603866c36cfbc2ee4b87
+sig_sha256 = 8d25818dd972fff5b9e9b4cc534a95100a1340c1c81d1486a68939d340e0a58b
