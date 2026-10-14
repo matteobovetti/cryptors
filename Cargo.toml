@@ -2,7 +2,7 @@
 name = "cryptors"
 description = "Pure Rust cryptographic library implementation supporting AES, DES, ECDH, ECDSA, Ed25519, HKDF, HMAC, HPKE, MD5, ML-DSA, ML-KEM, PBKDF2, Rand, RC4, RSA, SHA-1, SHA-256, SHA-3, and SHA-512"
 repository = "https://github.com/matteobovetti/cryptors"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
