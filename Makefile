@@ -1,5 +1,5 @@
 .PHONY: all build release check test fmt fmt-check lint doc doc-open \
-	clean bench bench-throughput bench-go audit publish-dry-run publish ci
+	clean examples bench bench-throughput bench-go audit publish-dry-run publish ci
 
 all: fmt check lint test
 
@@ -32,6 +32,16 @@ doc-open:
 
 clean:
 	cargo clean
+
+# Runs every file in examples/, in release mode as their docs suggest. They take
+# no arguments; each asserts its own known answers, so a failure stops the run.
+examples:
+	cargo build --release --examples
+	@for f in examples/*.rs; do \
+		name=$$(basename $$f .rs); \
+		echo "==> $$name"; \
+		cargo run --release --quiet --example $$name || exit 1; \
+	done
 
 bench:
 	cargo bench --all
@@ -99,4 +109,4 @@ publish-dry-run:
 publish:
 	cargo publish
 
-ci: fmt-check lint check test
+release-checks: fmt-check lint check test examples bench bench-throughput bench-go

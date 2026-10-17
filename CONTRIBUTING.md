@@ -26,16 +26,19 @@ Common tasks are available via the `Makefile`:
 | `make lint` | Run `clippy` and fail on warnings |
 | `make doc` | Build documentation for all crates |
 | `make doc-open` | Build documentation and open it in the browser |
+| `make examples` | Run every program in `examples/` in release mode; each asserts its own known answers |
 | `make bench` | Run benchmarks |
 | `make bench-throughput` | Run the `#[ignore]`d throughput tests in release mode, one thread |
 | `make bench-go` | Run the Go standard-library counterparts in `bench/` (needs Go) |
 | `make audit` | Audit dependencies for known vulnerabilities |
 | `make clean` | Remove build artifacts |
 | `make all` | Run `fmt`, `check`, `lint`, and `test` |
-| `make ci` | Run `fmt-check`, `lint`, `check`, and `test` (used in CI) |
+| `make release-checks` | The final local gate before a release: `fmt-check`, `lint`, `check`, `test`, `examples`, `bench`, `bench-throughput` and `bench-go` (slow, and needs Go) |
 
-Run `make ci` before opening a pull request — it's the same set of checks CI
-runs, and it must pass cleanly.
+Run `make fmt-check lint check test` before opening a pull request — they are
+the checks CI runs, and they must pass cleanly. Run `make release-checks`
+before releasing a new version: it adds the examples, the Rust benchmarks and
+throughput tests, and the Go comparisons, so it takes a long time.
 
 ## Repository layout
 
@@ -362,9 +365,8 @@ is declared in `src/lib.rs`. When implementing one:
   hash takes `D: Digest`, as HMAC does.
 - Where Go's standard library has the same algorithm, add its counterpart under
   `bench/<name>cmp/` and to `make bench-go`.
-- Update the algorithm table in `README.md`, setting the status to
-  Implemented, In progress or Planned, and give the algorithm a section like
-  the existing ones.
+- Add the algorithm to the table in `README.md`, and give it a page of its own
+  in `docs/` like the existing ones (`docs/<name>.md`), linked from the table.
 
 Keep implementations dependency-free unless there's a strong reason
 otherwise — the crate currently has zero dependencies, and that's deliberate.
@@ -399,7 +401,7 @@ shape:
 |------|--------|
 | `known_answers`, `million_a`, `padding_boundaries` | The public functions against vectors from the spec and from an independent implementation (OpenSSL, Go), including lengths on both sides of every padding boundary. |
 | `scalar_known_answers` | The same vectors forced through the scalar backend, which the public functions skip on a machine with hardware instructions. |
-| `matches_scalar_backend` | Every other backend, called directly, against scalar, over lengths that straddle block and padding boundaries. The name is fixed: the README and the module docs cite it. |
+| `matches_scalar_backend` | Every other backend, called directly, against scalar, over lengths that straddle block and padding boundaries. The name is fixed: the docs and the module docs cite it. |
 | `unaligned_input` | Every backend, on messages that start at every offset within a block. The vector backends load with unaligned instructions, and only this test runs the ones that are not the public path. |
 | `throughput` | Marked `#[ignore]`. |
 
@@ -555,7 +557,7 @@ values), `pack::tests::*` (`Compress` and `Decompress` for every number modulo `
 specification, the modulus check), `sample::tests::*`, `algorithm::tests::*` (K-PKE round trips, the encoding of the key,
 the ranges of what key generation makes), `params::tests::sizes_are_those_of_fips_203` and `error::tests::*`, with
 `sha3::xof::tests::*` for the streaming SHAKE. `cargo test -- mlkem:: sha3::xof` runs all of them. Each test that does not read a
-published vector was checked against a set of 88 mutants of the code (see the README): it is either the written-out
+published vector was checked against a set of 88 mutants of the code (see `docs/mlkem.md`): it is either the written-out
 definition of a part, or the only one to fail for some change.
 
 A cipher with a single implementation has no backend to compare, so `src/des/` swaps
@@ -579,7 +581,7 @@ padding byte) and see which tests fail.
 ## Pull requests
 
 - Keep PRs focused on a single algorithm or change where possible.
-- Make sure `make ci` passes locally before pushing.
+- Make sure `make fmt-check lint check test` passes locally before pushing.
 - Describe what the change implements/fixes and reference the relevant spec
   or RFC in the PR description.
 

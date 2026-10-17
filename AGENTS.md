@@ -7,7 +7,8 @@ This file provides guidance to Coding agents when working with code in this repo
 ## Commands
 
 ```sh
-make ci                  # fmt-check + clippy -D warnings + check + test: what CI runs, must pass
+make fmt-check lint check test   # what CI runs (clippy -D warnings): must pass before a PR
+make release-checks      # final gate before a release: the above + examples, bench, bench-throughput, bench-go (slow, needs Go)
 cargo test sha2::sha512  # one algorithm; test names follow the module path
 cargo test -- ecdh:: ec::   # ECDH's tests also live in the shared src/ec layer
 cargo test --release sha2::sha512 -- --ignored --nocapture --test-threads=1   # throughput test
@@ -31,6 +32,6 @@ CI builds with `RUSTFLAGS=-Dwarnings` on x86_64, aarch64 and a RISC-V (QEMU) tar
 - Test vectors come from the spec / Wycheproof / OpenSSL / Go, not hand-rolled. `vectors.rs` files (e.g. `src/hpke/vectors.rs`) are generated; don't edit by hand.
 - A test must fail for something no other test catches; verify by breaking the guarded code in a scratch copy before adding one.
 - `unsafe` only where there is no alternative, with a justifying comment (SIMD/intrinsics backends).
-- Rust doc comments (`*.rs`) must not mention Go, laptop timings or relative speed claims; benchmark numbers live in `README.md` and `bench/`.
-- Update the README algorithm table when an algorithm's status changes.
+- Rust doc comments (`*.rs`) must not mention Go, laptop timings or relative speed claims; benchmark numbers live in `README.md`, `docs/` and `bench/`.
+- Keep the README algorithm table and the per-algorithm pages in `docs/<name>.md` in step with the code.
 - Source files named like credentials (`key.rs`, `keys.rs`, `private_key*`, `*.pub`, …) are blocked by the repo's permission settings; use names like `keypair.rs`.

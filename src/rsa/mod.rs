@@ -221,7 +221,7 @@
 //! arithmetic modulo a number of any size is checked against Python's integers, in
 //! moduli of 1 to 32 limbs of the shapes that stress carries, and the validation of keys
 //! against keys that are wrong in exactly one way. Each test that does not read a
-//! published vector was checked against a set of mutants of the code (see the README).
+//! published vector was checked against a set of mutants of the code (see `docs/rsa.md`).
 //!
 //! ## Side channels
 //!
