@@ -27,7 +27,7 @@ jobs:
       matrix:
         # The five most recent stable releases. The oldest is `rust-version`
         # in Cargo.toml, so it doubles as the MSRV check: raise both together.
-        rust: ["1.99", "1.98", "1.97", "1.96", "1.95"]
+        rust: ["1.100", "1.99", "1.98", "1.97", "1.96", "1.95"]
         # Each arch is a different set of backends:
         #   x86_64  -- SSE2 always, plus whatever the runner's CPU adds
         #              (AVX2, SHA-NI, AES-NI, BMI).
